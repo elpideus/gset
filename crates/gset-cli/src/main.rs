@@ -110,7 +110,8 @@ fn main() -> ExitCode {
             eprintln!("{p}");
         }
         if problems.is_empty() {
-            println!("{} profiles, all good.", ok.len());
+            let n = ok.len();
+            println!("{n} profile{}, all good.", if n == 1 { "" } else { "s" });
             return ExitCode::SUCCESS;
         }
         eprintln!(
