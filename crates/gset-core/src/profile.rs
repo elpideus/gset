@@ -249,6 +249,97 @@ pub fn read(path: &Path) -> Result<Profile, String> {
     Profile::parse(&std::fs::read_to_string(path).map_err(|e| e.to_string())?)
 }
 
+// ------------------------------------------------------------------------------------------ updates
+
+/// One way a newer profile differs from the one in use. None of them touches your values.
+#[derive(Clone, Debug, Serialize, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Change {
+    NewSetting { key: String, label: String, help: String },
+    RemovedSetting { key: String, label: String, why: String },
+    Suggestion { key: String, label: String, value: Value, why: String, before: Option<Value> },
+    DroppedSuggestion { key: String, label: String },
+    NewChoice { key: String, label: String, choice: String },
+    Notes { notes: Vec<String> },
+    Name { name: String },
+}
+
+/// What a newer version of a profile changes.
+pub fn diff(old: &Profile, new: &Profile) -> Vec<Change> {
+    let before = crate::schema::Schema::for_game(Some(old));
+    let after = crate::schema::Schema::for_game(Some(new));
+    let label = |key: &str| after.get(key).or_else(|| before.get(key)).map(|d| d.label.clone()).unwrap_or_else(|| key.to_string());
+    let why = |key: &str| new.removed.get(key).cloned().unwrap_or_default();
+    let mut out = Vec::new();
+    if old.name != new.name {
+        out.push(Change::Name { name: new.name.clone() });
+    }
+    for (key, s) in &new.settings {
+        if !old.settings.contains_key(key) {
+            out.push(Change::NewSetting { key: key.clone(), label: s.label.clone(), help: s.help.clone() });
+        }
+    }
+    for key in old.hide.iter().filter(|k| !new.hide.contains(k)) {
+        out.push(Change::NewSetting { key: key.clone(), label: label(key), help: String::new() });
+    }
+    for key in old.settings.keys().filter(|k| !new.settings.contains_key(*k)).chain(new.hide.iter().filter(|k| !old.hide.contains(k))) {
+        out.push(Change::RemovedSetting { key: key.clone(), label: label(key), why: why(key) });
+    }
+    for (key, s) in &new.suggest {
+        let prev = old.suggest.get(key);
+        if prev.is_none_or(|p| !p.value.same(&s.value)) {
+            out.push(Change::Suggestion { key: key.clone(), label: label(key), value: s.value.clone(), why: s.why.clone(), before: prev.map(|p| p.value.clone()) });
+        }
+    }
+    for key in old.suggest.keys().filter(|k| !new.suggest.contains_key(*k) && after.get(k).is_some_and(|d| !d.hidden)) {
+        out.push(Change::DroppedSuggestion { key: key.clone(), label: label(key) });
+    }
+    for (key, choices) in &new.options {
+        let had = old.options.get(key);
+        for c in choices {
+            if !had.is_some_and(|h| h.iter().any(|x| x.value.same(&c.value))) {
+                out.push(Change::NewChoice { key: key.clone(), label: label(key), choice: c.label.clone() });
+            }
+        }
+    }
+    if old.notes != new.notes {
+        out.push(Change::Notes { notes: new.notes.clone() });
+    }
+    out
+}
+
+/// Downloaded profiles wait in profiles-pending/ until they're applied (by you, or by
+/// "Update profiles automatically"). Applying keeps the one replaced, for Undo.
+pub fn pending(paths: &crate::paths::Paths, id: &str, current: Option<&Profile>) -> Option<Profile> {
+    let p = read(&paths.data.join("profiles-pending").join(format!("{id}.toml"))).ok()?;
+    (current.is_none_or(|c| p.version > c.version)).then_some(p)
+}
+
+pub fn apply_pending(paths: &crate::paths::Paths, id: &str) -> Result<(), String> {
+    let from = paths.data.join("profiles-pending").join(format!("{id}.toml"));
+    let dir = paths.data.join("profiles");
+    let to = dir.join(format!("{id}.toml"));
+    let keep = paths.data.join("profiles-previous");
+    std::fs::create_dir_all(&dir).and_then(|()| std::fs::create_dir_all(&keep)).map_err(|e| e.to_string())?;
+    if to.exists() {
+        std::fs::copy(&to, keep.join(format!("{id}.toml"))).map_err(|e| e.to_string())?;
+    }
+    std::fs::rename(&from, &to).map_err(|e| format!("{}: {e}", from.display()))
+}
+
+/// Undoes apply_pending: the replaced profile comes back, the new one waits again.
+pub fn undo_apply(paths: &crate::paths::Paths, id: &str) -> Result<(), String> {
+    let cur = paths.data.join("profiles").join(format!("{id}.toml"));
+    let prev = paths.data.join("profiles-previous").join(format!("{id}.toml"));
+    let pend = paths.data.join("profiles-pending");
+    std::fs::create_dir_all(&pend).map_err(|e| e.to_string())?;
+    std::fs::rename(&cur, pend.join(format!("{id}.toml"))).map_err(|e| e.to_string())?;
+    if prev.exists() {
+        std::fs::rename(&prev, &cur).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -282,6 +373,18 @@ env = { VKD3D_CONFIG = "descriptor_heap" }
 label = "Fix the launcher crash"
 fix = "nte-launcher-windows"
 "#;
+
+    #[test]
+    fn diff_lists_what_changes() {
+        let old = Profile::parse("schema = 1\nid = \"n\"\nversion = 14\nname = \"N\"\n[suggest]\nlow_latency = { value = true }\n").unwrap();
+        let new = Profile::parse(NTE).unwrap();
+        let d = diff(&old, &new);
+        assert!(d.iter().any(|c| matches!(c, Change::NewSetting { key, .. } if key == "descriptor_heap")));
+        assert!(d.iter().any(|c| matches!(c, Change::RemovedSetting { key, why, .. } if key == "low_latency" && why.contains("1.4"))));
+        assert!(d.iter().any(|c| matches!(c, Change::Suggestion { key, before: None, .. } if key == "render_scale")));
+        assert!(d.iter().any(|c| matches!(c, Change::NewChoice { choice, .. } if choice.starts_with('L'))));
+        assert!(!d.iter().any(|c| matches!(c, Change::DroppedSuggestion { .. })), "a hidden setting's suggestion isn't reported twice");
+    }
 
     #[test]
     fn a_good_profile_reads() {

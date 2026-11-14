@@ -15,6 +15,24 @@ use std::path::PathBuf;
 /// Arguments that pick a graphics API, dropped when GSet picks one.
 const API_ARGS: &[&str] = &["-force-d3d11", "-force-d3d12", "-force-vulkan", "-force-glcore", "-dx11", "-dx12", "-d3d11", "-d3d12", "-vulkan"];
 
+impl Host {
+    /// What's installed and set up here.
+    pub fn detect(paths: &crate::paths::Paths) -> Host {
+        let exec = |p: &std::path::Path| {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        };
+        let helper = paths.home.join(".local/bin/gamescope-clipboard");
+        let in_path = |name: &str| std::env::var_os("PATH").and_then(|p| std::env::split_paths(&p).map(|d| d.join(name)).find(|f| exec(f)));
+        Host {
+            wayland_display: std::env::var("WAYLAND_DISPLAY").ok(),
+            mangohud_config: std::env::var("MANGOHUD_CONFIG").ok(),
+            clipboard_helper: if exec(&helper) { Some(helper) } else { in_path("gamescope-clipboard") },
+            game_mouse: paths.home.join(".config/game-mouse.conf").is_file(),
+        }
+    }
+}
+
 /// What the computer offers at launch time.
 #[derive(Clone, Debug, Default)]
 pub struct Host {

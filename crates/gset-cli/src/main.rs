@@ -136,7 +136,7 @@ fn launch(paths: &Paths, o: &Opts, args: Vec<String>) -> ExitCode {
     let screens = screen::screens();
     let (preset, why) = resolve::pick_preset(&app, &game, &screens, o.preset.as_deref());
     let values = resolve::resolve(&schema, &app, &game, preset.as_deref());
-    let host = host(paths);
+    let host = Host::detect(paths);
     let p = plan::build(&schema, &values, &game.info, &args, &screens, &host);
     let preset_text = match (&preset, &why) {
         (Some(id), PresetWhy::Screen { mode }) => format!("preset {} (the screen is {mode})", preset_name(&app, id)),
@@ -209,16 +209,6 @@ fn preset_name(app: &AppConfig, id: &str) -> String {
             None => p.name.clone(),
         },
         None => id.into(),
-    }
-}
-
-fn host(paths: &Paths) -> Host {
-    let helper = paths.home.join(".local/bin/gamescope-clipboard");
-    Host {
-        wayland_display: std::env::var("WAYLAND_DISPLAY").ok(),
-        mangohud_config: std::env::var("MANGOHUD_CONFIG").ok(),
-        clipboard_helper: is_executable(&helper).then_some(helper).or_else(|| which("gamescope-clipboard")),
-        game_mouse: paths.home.join(".config/game-mouse.conf").is_file(),
     }
 }
 

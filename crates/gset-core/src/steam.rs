@@ -228,3 +228,166 @@ mod tests {
         assert_eq!(vdf_pair("\t\t\"path\"\t\t\"/mnt/Storage/Games/Steam\"", "path").as_deref(), Some("/mnt/Storage/Games/Steam"));
     }
 }
+
+// ------------------------------------------------------------------------------------------ Steam's own files
+
+/// A text VDF value: a string, or a list of keyed children (Steam's config files).
+#[derive(Clone, Debug, PartialEq)]
+pub enum Vdf {
+    Str(String),
+    Map(Vec<(String, Vdf)>),
+}
+
+impl Vdf {
+    pub fn parse(text: &str) -> Vdf {
+        let mut chars = text.chars().peekable();
+        Vdf::Map(parse_map(&mut chars))
+    }
+
+    /// The child at this key (keys compare without case, as Steam's do).
+    pub fn get(&self, key: &str) -> Option<&Vdf> {
+        match self {
+            Vdf::Map(m) => m.iter().find(|(k, _)| k.eq_ignore_ascii_case(key)).map(|(_, v)| v),
+            Vdf::Str(_) => None,
+        }
+    }
+
+    pub fn path(&self, keys: &[&str]) -> Option<&Vdf> {
+        keys.iter().try_fold(self, |node, k| node.get(k))
+    }
+
+    pub fn str(&self) -> Option<&str> {
+        match self {
+            Vdf::Str(s) => Some(s),
+            Vdf::Map(_) => None,
+        }
+    }
+
+    pub fn entries(&self) -> &[(String, Vdf)] {
+        match self {
+            Vdf::Map(m) => m,
+            Vdf::Str(_) => &[],
+        }
+    }
+}
+
+fn parse_map(chars: &mut std::iter::Peekable<std::str::Chars>) -> Vec<(String, Vdf)> {
+    let mut out = Vec::new();
+    let mut key: Option<String> = None;
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => {
+                let mut s = String::new();
+                while let Some(c) = chars.next() {
+                    match c {
+                        '\\' => {
+                            if let Some(n) = chars.next() {
+                                s.push(match n {
+                                    'n' => '\n',
+                                    't' => '\t',
+                                    x => x,
+                                });
+                            }
+                        }
+                        '"' => break,
+                        x => s.push(x),
+                    }
+                }
+                match key.take() {
+                    None => key = Some(s),
+                    Some(k) => out.push((k, Vdf::Str(s))),
+                }
+            }
+            '{' => {
+                let child = parse_map(chars);
+                if let Some(k) = key.take() {
+                    out.push((k, Vdf::Map(child)));
+                }
+            }
+            '}' => return out,
+            '/' if chars.peek() == Some(&'/') => {
+                for c in chars.by_ref() {
+                    if c == '\n' {
+                        break;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// The most recently written localconfig.vdf (the signed-in user's).
+fn localconfig(steam_root: &Path) -> Option<Vdf> {
+    let users = std::fs::read_dir(steam_root.join("userdata")).ok()?;
+    let newest = users
+        .flatten()
+        .map(|e| e.path().join("config/localconfig.vdf"))
+        .filter(|p| p.is_file())
+        .max_by_key(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok())?;
+    Some(Vdf::parse(&std::fs::read_to_string(newest).ok()?))
+}
+
+/// What Steam knows about each of your games: when you last played it, its launch options.
+#[derive(Clone, Debug, Default)]
+pub struct SteamState {
+    pub last_played: std::collections::HashMap<u64, u64>,
+    pub launch_options: std::collections::HashMap<u64, String>,
+    /// the compatibility tool picked for a game in its Properties
+    pub compat_tool: std::collections::HashMap<u64, String>,
+}
+
+pub fn state(steam_root: &Path) -> SteamState {
+    let mut s = SteamState::default();
+    if let Some(cfg) = localconfig(steam_root)
+        && let Some(apps) = cfg.path(&["UserLocalConfigStore", "Software", "Valve", "Steam", "apps"])
+    {
+        for (id, app) in apps.entries() {
+            let Ok(id) = id.parse::<u64>() else { continue };
+            if let Some(t) = app.get("LastPlayed").and_then(Vdf::str).and_then(|t| t.parse().ok()) {
+                s.last_played.insert(id, t);
+            }
+            if let Some(o) = app.get("LaunchOptions").and_then(Vdf::str) {
+                s.launch_options.insert(id, o.to_string());
+            }
+        }
+    }
+    if let Ok(text) = std::fs::read_to_string(steam_root.join("config/config.vdf"))
+        && let Some(map) = Vdf::parse(&text).path(&["InstallConfigStore", "Software", "Valve", "Steam", "CompatToolMapping"])
+    {
+        for (id, entry) in map.entries() {
+            if let (Ok(id), Some(name)) = (id.parse::<u64>(), entry.get("name").and_then(Vdf::str))
+                && id != 0
+                && !name.is_empty()
+            {
+                s.compat_tool.insert(id, name.to_string());
+            }
+        }
+    }
+    s
+}
+
+/// The id Steam uses to start a game: an app id as it is, a shortcut's as (id << 32) | 0x02000000.
+pub fn run_id(id: u64) -> u64 {
+    if id > u64::from(u32::MAX >> 1) { (id << 32) | 0x0200_0000 } else { id }
+}
+
+#[cfg(test)]
+mod vdf_tests {
+    use super::*;
+
+    #[test]
+    fn reads_steams_text_files() {
+        let text = r#""UserLocalConfigStore" { "Software" { "Valve" { "Steam" { "apps" {
+            "4508340" { "LastPlayed" "1731400000" "LaunchOptions" "/home/u/.local/bin/nte-launch %command%" }
+            "892970"  { "LastPlayed" "1700000000" }
+        } } } } }"#;
+        let v = Vdf::parse(text);
+        let apps = v.path(&["UserLocalConfigStore", "Software", "Valve", "Steam", "apps"]).unwrap();
+        assert_eq!(apps.entries().len(), 2);
+        assert_eq!(apps.get("4508340").and_then(|a| a.get("launchoptions")).and_then(Vdf::str), Some("/home/u/.local/bin/nte-launch %command%"));
+        assert_eq!(run_id(2541017638), (2541017638u64 << 32) | 0x0200_0000);
+        assert_eq!(run_id(230410), 230410);
+    }
+}

@@ -148,6 +148,13 @@ impl AppConfig {
         }
     }
 
+    pub fn remove_preset(&mut self, id: &str) {
+        if let Some(t) = self.doc.get_mut("presets").and_then(Item::as_table_like_mut) {
+            t.remove(id);
+        }
+        self.presets.retain(|p| p.id != id);
+    }
+
     pub fn text(&self) -> String {
         self.doc.to_string()
     }
