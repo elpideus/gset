@@ -1,0 +1,17 @@
+[package]
+name = "gset-cli"
+description = "The gset launcher: put `gset %command%` in a game's Steam launch options"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "gset"
+path = "src/main.rs"
+
+[dependencies]
+gset-core.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

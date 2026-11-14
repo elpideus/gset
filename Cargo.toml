@@ -1,0 +1,24 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/elpideus/gset"
+
+[workspace.dependencies]
+gset-core = { path = "crates/gset-core" }
+libc = "0.2"
+serde = { version = "1", features = ["derive"] }
+shell-words = "1.1"
+tempfile = "3"
+toml = "1.2"
+toml_edit = "0.25"
+wayland-client = "0.31"
+
+[profile.release]
+lto = "thin"
+strip = true
+codegen-units = 4

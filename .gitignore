@@ -1,0 +1,7 @@
+/target
+node_modules/
+dist/
+*.log
+.DS_Store
+# design prototypes use copies of game art; they live outside this repository
+/design-prototype/
