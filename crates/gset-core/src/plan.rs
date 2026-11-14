@@ -168,7 +168,12 @@ pub fn build(schema: &Schema, r: &Resolved, info: &GameInfo, incoming: &[String]
         for (k, v) in &def.effect.env {
             set(k, v.clone());
         }
-        args.extend(def.effect.args.iter().cloned());
+        // a switch the command already has isn't added twice (Steam's own launch options may carry it)
+        for a in &def.effect.args {
+            if !args.contains(a) {
+                args.push(a.clone());
+            }
+        }
         if let Some(f) = &def.effect.fix {
             plan.fixes.push(f.clone());
         }
