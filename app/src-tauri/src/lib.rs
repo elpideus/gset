@@ -2,6 +2,7 @@
 
 mod art;
 mod launcher;
+pub mod profiles;
 mod theme;
 pub mod views;
 
@@ -28,6 +29,7 @@ pub fn start() {
             views::save_preset,
             views::delete_preset,
             views::theme,
+            profiles::refresh_profiles,
         ])
         .setup(|app| {
             if let Some(done) = launcher::ensure(&gset_core::Paths::new()) {

@@ -147,6 +147,13 @@ export interface Theme {
   scheme?: "dark" | "light" | null;
 }
 
+export interface ProfilesRefreshed {
+  new: string[];
+  updates: string[];
+  linked: string[];
+  problems: string[];
+}
+
 export interface AppUpdate {
   version: string;
   notes: string;
@@ -168,6 +175,8 @@ export interface Backend {
   deletePreset(id: string): Promise<AppView>;
   theme(): Promise<Theme>;
   onTheme(cb: (t: Theme) => void): void;
+  /** Downloads the community's profiles and installs what's new (never changes values). */
+  refreshProfiles(): Promise<ProfilesRefreshed>;
   /** A newer GSet from the latest release, if there is one. */
   checkUpdate(): Promise<AppUpdate | null>;
   /** Downloads and installs the update found by checkUpdate, then restarts GSet. */
@@ -196,6 +205,7 @@ async function tauriBackend(): Promise<Backend> {
     savePreset: (id, name, screen) => invoke("save_preset", { id, name, screen }),
     deletePreset: (id) => invoke("delete_preset", { id }),
     theme: () => invoke("theme"),
+    refreshProfiles: () => invoke("refresh_profiles"),
     onTheme: (cb) => {
       void listen<Theme>("theme-changed", (e) => cb(e.payload));
     },

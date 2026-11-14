@@ -97,8 +97,11 @@ export function SettingsDialog() {
         <div className="srow">
           <div className="lab">
             <b>{app.profiles} profiles</b>
-            <small>From github.com/elpideus/gset-profiles.</small>
+            <small>From github.com/elpideus/gset-profiles, signed, checked when this window opens.</small>
           </div>
+          <button type="button" className="btn" onClick={() => void useStore.getState().refreshProfiles(false)}>
+            Check now
+          </button>
         </div>
       </section>
       <section>

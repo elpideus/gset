@@ -65,6 +65,7 @@ interface State {
   savePreset(id: string | null, name: string, screen: string | null): Promise<void>;
   deletePreset(id: string): Promise<void>;
   checkUpdate(): Promise<void>;
+  refreshProfiles(quiet: boolean): Promise<void>;
   installUpdate(): Promise<void>;
 }
 
@@ -107,7 +108,10 @@ export const useStore = create<State>((set, get) => {
         const first = library.find((g) => g.key === get().selected) ?? [...library].sort((a, b) => (b.last_played ?? 0) - (a.last_played ?? 0))[0];
         if (first) await get().select(first.key);
         set({ ready: true });
-        if (app.check_updates) void get().checkUpdate();
+        if (app.check_updates) {
+          void get().checkUpdate();
+          void get().refreshProfiles(true);
+        }
       } catch (e) {
         set({ error: String(e), ready: true });
       }
@@ -276,6 +280,26 @@ export const useStore = create<State>((set, get) => {
       } catch (e) {
         // offline, or GitHub unreachable: say nothing, try again next time
         console.warn("update check:", e);
+      }
+    },
+    async refreshProfiles(quiet) {
+      try {
+        const r = await (await api()).refreshProfiles();
+        const names = (l: string[]) => (l.length > 3 ? `${l.slice(0, 3).join(", ")} and ${l.length - 3} more` : l.join(", "));
+        const said: string[] = [];
+        if (r.new.length) said.push(`New ${r.new.length === 1 ? "profile" : "profiles"}: ${names(r.new)}.`);
+        if (r.updates.length) said.push(`${r.updates.length === 1 ? "A profile update" : "Profile updates"} for ${names(r.updates)}.`);
+        if (said.length || r.linked.length) {
+          await get().refreshLibrary();
+          if (get().selected) await get().select(get().selected!);
+          set({ app: await (await api()).appSettings() });
+        }
+        if (said.length) toast(said.join(" "));
+        else if (!quiet) toast("All profiles are up to date.");
+        if (r.problems.length) console.warn("profiles:", r.problems);
+      } catch (e) {
+        if (!quiet) fail(`Couldn’t check the profiles: ${e}`);
+        else console.warn("profiles:", e);
       }
     },
     async installUpdate() {

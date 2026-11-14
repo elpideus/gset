@@ -49,6 +49,11 @@ A profile describes a game: its names and notes, which settings apply, settings 
 profile's suggestions the first time GSet meets it; after that, a suggestion only shows next to the
 setting until you use it or hide it. Profiles are data: they can't run commands.
 
+GSet downloads the profiles when its window opens (never while a game starts). The bundle is signed
+with the same key as GSet's releases, and a bundle that doesn't match is thrown away. A newer
+version of a profile you have waits behind an **Update** button with a list of what changes, unless
+you turn on *Update profiles automatically*.
+
 ## The files
 
 Everything is plain TOML you can also edit by hand; GSet keeps your comments when it saves.
@@ -58,6 +63,7 @@ See [docs/settings.md](docs/settings.md).
 |---|---|
 | `~/.config/gset/gset.toml` | GSet's options, your defaults for every game, the presets |
 | `~/.config/gset/games/<game>.toml` | one game: how it starts, its values, its preset changes |
+| `~/.local/share/gset/profiles/` | the downloaded profiles (updates you haven't taken wait in `profiles-pending/`) |
 | `~/.local/state/gset/launch.log` | one entry per launch |
 
 ## The launcher
@@ -67,6 +73,7 @@ gset [--game=NAME] [--preset=NAME] [--dry-run] COMMAND…
 gset --import          bring games over from the old launch-options scripts
 gset --list            the games GSet knows
 gset --screens         the screens that are on, and which preset applies
+gset --check-profiles=DIR   check a folder of profiles (what gset-profiles' CI runs)
 ```
 
 `--dry-run` prints what would run and changes nothing.

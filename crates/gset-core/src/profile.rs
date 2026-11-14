@@ -491,6 +491,184 @@ pub fn undo_apply(paths: &crate::paths::Paths, id: &str) -> Result<(), String> {
     Ok(())
 }
 
+// ------------------------------------------------------------------------------------------ the shared set
+
+/// Every profile of the community repository in one file, which GSet downloads (signed).
+/// The profiles stay as their TOML text, so GSet checks them exactly as it checks local ones.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Bundle {
+    /// the bundle format (not the profiles')
+    pub schema: u32,
+    /// id → the profile file's text
+    pub profiles: BTreeMap<String, String>,
+}
+
+pub const BUNDLE_SCHEMA: u32 = 1;
+
+/// Checks every *.toml in a folder the way the repository's CI does: each profile reads and passes
+/// GSet's checks, its file is named after its id, and no two share an id or a Steam id.
+pub fn check_dir(dir: &Path) -> (BTreeMap<String, (Profile, String)>, Vec<String>) {
+    let mut ok: BTreeMap<String, (Profile, String)> = BTreeMap::new();
+    let mut problems = Vec::new();
+    let mut files: Vec<PathBuf> = match std::fs::read_dir(dir) {
+        Ok(e) => e
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x == "toml"))
+            .collect(),
+        Err(e) => return (ok, vec![format!("{}: {e}", dir.display())]),
+    };
+    files.sort();
+    let mut steam: BTreeMap<u64, String> = BTreeMap::new();
+    for f in files {
+        let name = f
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("?")
+            .to_string();
+        let text = match std::fs::read_to_string(&f) {
+            Ok(t) => t,
+            Err(e) => {
+                problems.push(format!("{name}: {e}"));
+                continue;
+            }
+        };
+        let p = match Profile::parse(&text) {
+            Ok(p) => p,
+            Err(e) => {
+                problems.push(format!("{name}: {e}"));
+                continue;
+            }
+        };
+        if name != format!("{}.toml", p.id) {
+            problems.push(format!(
+                "{name}: its id is “{}”, so the file must be {}.toml",
+                p.id, p.id
+            ));
+        }
+        if ok.contains_key(&p.id) {
+            problems.push(format!(
+                "{name}: another file already has the id “{}”",
+                p.id
+            ));
+        }
+        for id in &p.steam {
+            if let Some(other) = steam.insert(*id, p.id.clone()) {
+                problems.push(format!("{name}: Steam id {id} is also in {other}.toml"));
+            }
+        }
+        ok.insert(p.id.clone(), (p, text));
+    }
+    (ok, problems)
+}
+
+/// The bundle for a folder of profiles, or what's wrong with them.
+pub fn make_bundle(dir: &Path) -> Result<String, Vec<String>> {
+    let (ok, problems) = check_dir(dir);
+    if !problems.is_empty() {
+        return Err(problems);
+    }
+    let b = Bundle {
+        schema: BUNDLE_SCHEMA,
+        profiles: ok.into_iter().map(|(id, (_, text))| (id, text)).collect(),
+    };
+    serde_json::to_string_pretty(&b).map_err(|e| vec![e.to_string()])
+}
+
+pub fn read_bundle(text: &str) -> Result<Bundle, String> {
+    let b: Bundle =
+        serde_json::from_str(text).map_err(|e| format!("the profile bundle doesn't read: {e}"))?;
+    if b.schema > BUNDLE_SCHEMA {
+        return Err(format!(
+            "the profile bundle needs a newer GSet (format {})",
+            b.schema
+        ));
+    }
+    Ok(b)
+}
+
+/// What a downloaded bundle changed: profiles new to this computer go straight in (they only
+/// describe games), newer versions of ones you have wait in profiles-pending/ for you to review,
+/// unless you update automatically. Games of yours that a new profile describes get linked to it.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct Installed {
+    pub new: Vec<String>,
+    pub updates: Vec<String>,
+    pub linked: Vec<String>,
+    pub problems: Vec<String>,
+}
+
+pub fn install_bundle(paths: &crate::paths::Paths, b: &Bundle, apply_updates: bool) -> Installed {
+    let mut out = Installed::default();
+    let dir = paths.data.join("profiles");
+    let pending = paths.data.join("profiles-pending");
+    let have = Profiles::load(std::slice::from_ref(&dir));
+    for (id, text) in &b.profiles {
+        let p = match Profile::parse(text) {
+            Ok(p) if p.id == *id => p,
+            Ok(p) => {
+                out.problems
+                    .push(format!("{id}: the profile inside says “{}”", p.id));
+                continue;
+            }
+            Err(e) => {
+                out.problems.push(format!("{id}: {e}"));
+                continue;
+            }
+        };
+        let write = |folder: &Path| -> Result<(), String> {
+            std::fs::create_dir_all(folder).map_err(|e| e.to_string())?;
+            let file = folder.join(format!("{id}.toml"));
+            let tmp = folder.join(format!(".{id}.toml.new"));
+            std::fs::write(&tmp, text)
+                .and_then(|()| std::fs::rename(&tmp, &file))
+                .map_err(|e| e.to_string())
+        };
+        match have.get(id) {
+            None => match write(&dir) {
+                Ok(()) => out.new.push(p.name.clone()),
+                Err(e) => out.problems.push(format!("{id}: {e}")),
+            },
+            Some(cur) if p.version > cur.version => {
+                let already =
+                    read(&pending.join(format!("{id}.toml"))).is_ok_and(|w| w.version >= p.version);
+                if !already && let Err(e) = write(&pending) {
+                    out.problems.push(format!("{id}: {e}"));
+                    continue;
+                }
+                if apply_updates && let Err(e) = apply_pending(paths, id) {
+                    out.problems.push(format!("{id}: {e}"));
+                }
+                if !already || apply_updates {
+                    out.updates.push(p.name.clone());
+                }
+            }
+            Some(_) => {}
+        }
+    }
+    // your games without a profile that one of these describes
+    let all = Profiles::load(&dirs(paths));
+    for mut g in crate::config::all_games(paths).0 {
+        if g.info.profile.is_some() || g.info.script.is_some() {
+            continue;
+        }
+        let Some(steam) = g.info.steam else { continue };
+        if let Some(p) = all.for_steam(steam) {
+            let mut info = g.info.clone();
+            info.profile = Some(p.id.clone());
+            if info.engine.is_none() {
+                info.engine = p.engine.clone();
+            }
+            g.set_info(info);
+            match g.save() {
+                Ok(()) => out.linked.push(g.info.name.clone()),
+                Err(e) => out.problems.push(format!("{}: {e}", g.key)),
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -524,6 +702,97 @@ env = { VKD3D_CONFIG = "descriptor_heap" }
 label = "Fix the launcher crash"
 fix = "nte-launcher-windows"
 "#;
+
+    #[test]
+    fn bundles_install_new_profiles_and_hold_updates() {
+        let d = tempfile::tempdir().unwrap();
+        let paths = crate::paths::Paths {
+            config: d.path().join("c"),
+            data: d.path().join("d"),
+            state: d.path().join("s"),
+            home: d.path().into(),
+        };
+        let repo = d.path().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        let p = |v: u32| {
+            format!("schema = 1\nid = \"g\"\nversion = {v}\nname = \"Good Game\"\nsteam = [42]\n")
+        };
+        std::fs::write(repo.join("g.toml"), p(1)).unwrap();
+        let b = read_bundle(&make_bundle(&repo).unwrap()).unwrap();
+        // a game of yours that no profile described yet
+        let mut game = crate::config::GameConfig::new(
+            &paths,
+            "mine",
+            crate::config::GameInfo {
+                name: "Mine".into(),
+                steam: Some(42),
+                ..Default::default()
+            },
+        );
+        game.set("gamescope", Some(true.into()));
+        game.save().unwrap();
+
+        let got = install_bundle(&paths, &b, false);
+        assert_eq!(
+            (got.new.len(), got.updates.len(), got.linked.len()),
+            (1, 0, 1),
+            "{got:?}"
+        );
+        let mine = crate::config::GameConfig::load(&game.path).unwrap();
+        assert_eq!(mine.info.profile.as_deref(), Some("g"));
+        assert_eq!(
+            mine.values["gamescope"],
+            Value::Bool(true),
+            "linking never touches values"
+        );
+        assert!(
+            install_bundle(&paths, &b, false).new.is_empty(),
+            "nothing new the second time"
+        );
+
+        std::fs::write(repo.join("g.toml"), p(2)).unwrap();
+        let b2 = read_bundle(&make_bundle(&repo).unwrap()).unwrap();
+        let got = install_bundle(&paths, &b2, false);
+        assert_eq!(got.updates, vec!["Good Game".to_string()]);
+        let have = Profiles::load(&[paths.data.join("profiles")]);
+        assert_eq!(have.get("g").unwrap().version, 1, "an update waits for you");
+        assert_eq!(pending(&paths, "g", have.get("g")).unwrap().version, 2);
+        assert!(
+            install_bundle(&paths, &b2, false).updates.is_empty(),
+            "the same update isn't announced twice"
+        );
+        install_bundle(&paths, &b2, true);
+        assert_eq!(
+            Profiles::load(&[paths.data.join("profiles")])
+                .get("g")
+                .unwrap()
+                .version,
+            2,
+            "automatic updates apply it"
+        );
+
+        // the repository's checks
+        std::fs::write(
+            repo.join("wrong-name.toml"),
+            p(1).replace("id = \"g\"", "id = \"h\"")
+                .replace("[42]", "[43]"),
+        )
+        .unwrap();
+        std::fs::write(
+            repo.join("dup.toml"),
+            p(1).replace("id = \"g\"", "id = \"dup\""),
+        )
+        .unwrap();
+        let problems = make_bundle(&repo).unwrap_err();
+        assert!(
+            problems.iter().any(|e| e.contains("must be h.toml")),
+            "{problems:?}"
+        );
+        assert!(
+            problems.iter().any(|e| e.contains("Steam id 42")),
+            "{problems:?}"
+        );
+    }
 
     #[test]
     fn diff_lists_what_changes() {

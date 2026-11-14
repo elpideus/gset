@@ -1197,8 +1197,12 @@ dependencies = [
 name = "gset-app"
 version = "0.1.1"
 dependencies = [
+ "base64 0.23.1",
  "dbus",
  "gset-core",
+ "minisign-verify",
+ "reqwest",
+ "rustls",
  "serde",
  "serde_json",
  "tauri",
@@ -1220,6 +1224,7 @@ version = "0.1.1"
 dependencies = [
  "libc",
  "serde",
+ "serde_json",
  "shell-words",
  "tempfile",
  "toml 1.2.1+spec-1.1.0",

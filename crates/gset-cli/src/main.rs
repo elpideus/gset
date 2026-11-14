@@ -30,6 +30,8 @@ gset: game launch settings
       --dry-run              print what would be written
   gset --list                the games GSet knows
   gset --screens             the screens that are on, and the preset each game would use
+  gset --check-profiles=DIR  check a folder of game profiles as the profiles repository does
+  gset --bundle-profiles=DIR print the bundle of a folder of profiles (JSON), as GSet downloads it
   gset --version
 
 Settings: ~/.config/gset/ (gset.toml, games/*.toml). Log: ~/.local/state/gset/launch.log
@@ -44,6 +46,8 @@ struct Opts {
     import: Option<Option<String>>,
     list: bool,
     screens: bool,
+    check_profiles: Option<String>,
+    bundle_profiles: Option<String>,
     help: bool,
     version: bool,
 }
@@ -72,6 +76,12 @@ fn main() -> ExitCode {
                 o.game = Some(a["--game=".len()..].trim_end_matches(".toml").to_string())
             }
             _ if a.starts_with("--preset=") => o.preset = Some(a["--preset=".len()..].to_string()),
+            _ if a.starts_with("--check-profiles=") => {
+                o.check_profiles = Some(a["--check-profiles=".len()..].to_string())
+            }
+            _ if a.starts_with("--bundle-profiles=") => {
+                o.bundle_profiles = Some(a["--bundle-profiles=".len()..].to_string())
+            }
             _ => break,
         }
         args.remove(0);
@@ -93,6 +103,36 @@ fn main() -> ExitCode {
     }
     if o.screens {
         return screens(&paths);
+    }
+    if let Some(dir) = &o.check_profiles {
+        let (ok, problems) = gset_core::profile::check_dir(&paths.expand(dir));
+        for p in &problems {
+            eprintln!("{p}");
+        }
+        if problems.is_empty() {
+            println!("{} profiles, all good.", ok.len());
+            return ExitCode::SUCCESS;
+        }
+        eprintln!(
+            "{} problems in {} profiles.",
+            problems.len(),
+            ok.len() + problems.len()
+        );
+        return ExitCode::from(1);
+    }
+    if let Some(dir) = &o.bundle_profiles {
+        return match gset_core::profile::make_bundle(&paths.expand(dir)) {
+            Ok(json) => {
+                println!("{json}");
+                ExitCode::SUCCESS
+            }
+            Err(problems) => {
+                for p in problems {
+                    eprintln!("{p}");
+                }
+                ExitCode::from(1)
+            }
+        };
     }
     launch(&paths, &o, args)
 }

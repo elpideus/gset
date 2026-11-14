@@ -12,5 +12,19 @@ fn main() {
             }
         }
     }
+    // gset-app --refresh-profiles: download the community's profiles now, without the window
+    if args.first().map(String::as_str) == Some("--refresh-profiles") {
+        match tauri::async_runtime::block_on(gset_app::profiles::refresh()) {
+            Ok(done) => println!(
+                "{}",
+                serde_json::to_string_pretty(&done).unwrap_or_default()
+            ),
+            Err(e) => {
+                eprintln!("gset-app: {e}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
     gset_app::start();
 }
