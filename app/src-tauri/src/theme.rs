@@ -21,21 +21,37 @@ const PATH: &str = "/org/freedesktop/portal/desktop";
 const IFACE: &str = "org.freedesktop.portal.Settings";
 
 pub fn read() -> Theme {
-    let Ok(conn) = Connection::new_session() else { return Theme::default() };
+    let Ok(conn) = Connection::new_session() else {
+        return Theme::default();
+    };
     let proxy = conn.with_proxy(DEST, PATH, Duration::from_millis(500));
     let one = |key: &str| -> Option<Variant<Box<dyn RefArg>>> {
-        proxy.method_call(IFACE, "ReadOne", ("org.freedesktop.appearance", key)).ok().map(|(v,): (Variant<Box<dyn RefArg>>,)| v)
+        proxy
+            .method_call(IFACE, "ReadOne", ("org.freedesktop.appearance", key))
+            .ok()
+            .map(|(v,): (Variant<Box<dyn RefArg>>,)| v)
     };
     let accent = one("accent-color").and_then(|v| {
-        let rgb: Vec<f64> = unwrap(&*v.0).as_iter()?.filter_map(|x| x.as_f64()).collect();
-        (rgb.len() == 3 && rgb.iter().all(|c| (0.0..=1.0).contains(c)))
-            .then(|| format!("#{:02x}{:02x}{:02x}", (rgb[0] * 255.0).round() as u8, (rgb[1] * 255.0).round() as u8, (rgb[2] * 255.0).round() as u8))
+        let rgb: Vec<f64> = unwrap(&*v.0)
+            .as_iter()?
+            .filter_map(|x| x.as_f64())
+            .collect();
+        (rgb.len() == 3 && rgb.iter().all(|c| (0.0..=1.0).contains(c))).then(|| {
+            format!(
+                "#{:02x}{:02x}{:02x}",
+                (rgb[0] * 255.0).round() as u8,
+                (rgb[1] * 255.0).round() as u8,
+                (rgb[2] * 255.0).round() as u8
+            )
+        })
     });
-    let scheme = one("color-scheme").and_then(|v| unwrap(&*v.0).as_u64()).and_then(|n| match n {
-        1 => Some("dark".to_string()),
-        2 => Some("light".to_string()),
-        _ => None,
-    });
+    let scheme = one("color-scheme")
+        .and_then(|v| unwrap(&*v.0).as_u64())
+        .and_then(|n| match n {
+            1 => Some("dark".to_string()),
+            2 => Some("light".to_string()),
+            _ => None,
+        });
     Theme { accent, scheme }
 }
 
@@ -53,7 +69,9 @@ fn unwrap(a: &dyn RefArg) -> &dyn RefArg {
 /// Tells the window when the accent or the light/dark preference changes.
 pub fn watch(app: AppHandle) {
     std::thread::spawn(move || {
-        let Ok(conn) = Connection::new_session() else { return };
+        let Ok(conn) = Connection::new_session() else {
+            return;
+        };
         let rule = MatchRule::new_signal(IFACE, "SettingChanged");
         let handle = app.clone();
         if conn

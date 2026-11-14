@@ -135,5 +135,12 @@ export async function mockBackend(): Promise<Backend> {
     },
     theme: async () => ({ accent: params.get("accent") ?? "#e6a5d9", scheme: (params.get("scheme") as Theme["scheme"]) ?? "dark" }),
     onTheme: (cb) => listeners.push(cb),
+    checkUpdate: async () => (params.get("update") ? { version: params.get("update")!, notes: "- Presets can be renamed\n- Faster library" } : null),
+    async installUpdate(progress) {
+      for (let i = 1; i <= 10; i++) {
+        await new Promise((r) => setTimeout(r, 120));
+        progress(i / 10);
+      }
+    },
   };
 }

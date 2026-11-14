@@ -16,12 +16,19 @@ pub struct Paths {
 
 impl Paths {
     pub fn new() -> Paths {
-        let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/"));
+        let home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("/"));
         let xdg = |var: &str, fallback: &str| {
-            std::env::var_os(var).map(PathBuf::from).filter(|p| p.is_absolute()).unwrap_or_else(|| home.join(fallback))
+            std::env::var_os(var)
+                .map(PathBuf::from)
+                .filter(|p| p.is_absolute())
+                .unwrap_or_else(|| home.join(fallback))
         };
         let pick = |own: &str, var: &str, fallback: &str| {
-            std::env::var_os(own).map(PathBuf::from).unwrap_or_else(|| xdg(var, fallback).join("gset"))
+            std::env::var_os(own)
+                .map(PathBuf::from)
+                .unwrap_or_else(|| xdg(var, fallback).join("gset"))
         };
         Paths {
             config: pick("GSET_CONFIG_DIR", "XDG_CONFIG_HOME", ".config"),
@@ -50,7 +57,11 @@ impl Paths {
                 return self.home.join(rest);
             }
         }
-        if p == "~" { self.home.clone() } else { PathBuf::from(p) }
+        if p == "~" {
+            self.home.clone()
+        } else {
+            PathBuf::from(p)
+        }
     }
 }
 

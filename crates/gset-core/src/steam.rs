@@ -25,14 +25,23 @@ impl IdFrom {
 /// The id of the game Steam is starting.
 pub fn app_id(args: &[String], env: impl Fn(&str) -> Option<String>) -> Option<(u64, IdFrom)> {
     for a in args {
-        if let Some(n) = a.strip_prefix("AppId=").and_then(|n| n.parse::<u64>().ok()).filter(|n| *n != 0) {
+        if let Some(n) = a
+            .strip_prefix("AppId=")
+            .and_then(|n| n.parse::<u64>().ok())
+            .filter(|n| *n != 0)
+        {
             return Some((n, IdFrom::Command));
         }
     }
-    if let Some(n) = env("SteamAppId").and_then(|v| v.trim().parse::<u64>().ok()).filter(|n| *n != 0) {
+    if let Some(n) = env("SteamAppId")
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|n| *n != 0)
+    {
         return Some((n, IdFrom::SteamAppId));
     }
-    let n = env("SteamGameId").and_then(|v| v.trim().parse::<u64>().ok()).filter(|n| *n != 0)?;
+    let n = env("SteamGameId")
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|n| *n != 0)?;
     Some((if n >= 1 << 32 { n >> 32 } else { n }, IdFrom::SteamGameId))
 }
 
@@ -103,7 +112,12 @@ pub fn inspect(args: &[String], id: Option<u64>, steam_root: &Path) -> Inspectio
             .as_ref()
             .map(|l| l.join(format!("appmanifest_{id}.acf")))
             .filter(|m| m.is_file())
-            .or_else(|| libraries(steam_root).into_iter().map(|l| l.join(format!("steamapps/appmanifest_{id}.acf"))).find(|m| m.is_file()));
+            .or_else(|| {
+                libraries(steam_root)
+                    .into_iter()
+                    .map(|l| l.join(format!("steamapps/appmanifest_{id}.acf")))
+                    .find(|m| m.is_file())
+            });
         if let Some(m) = manifest
             && let Ok(text) = std::fs::read_to_string(&m)
         {
@@ -111,18 +125,32 @@ pub fn inspect(args: &[String], id: Option<u64>, steam_root: &Path) -> Inspectio
             if root.is_none()
                 && let Some(dir) = vdf_value(&text, "installdir")
             {
-                let r = m.parent().unwrap_or(Path::new("/")).join("common").join(dir);
+                let r = m
+                    .parent()
+                    .unwrap_or(Path::new("/"))
+                    .join("common")
+                    .join(dir);
                 root = r.is_dir().then_some(r);
             }
         }
     }
     let engine = root.as_deref().and_then(engine_of);
-    Inspection { name, exe, root, proton, engine }
+    Inspection {
+        name,
+        exe,
+        root,
+        proton,
+        engine,
+    }
 }
 
 fn is_too_wide(p: &Path) -> bool {
     let home = std::env::var_os("HOME").map(PathBuf::from);
-    p == Path::new("/") || Some(p.to_path_buf()) == home || ["/usr", "/bin", "/opt", "/tmp"].iter().any(|w| p.starts_with(w))
+    p == Path::new("/")
+        || Some(p.to_path_buf()) == home
+        || ["/usr", "/bin", "/opt", "/tmp"]
+            .iter()
+            .any(|w| p.starts_with(w))
 }
 
 /// Every Steam library folder (libraryfolders.vdf's "path" lines).
@@ -144,12 +172,20 @@ pub fn libraries(steam_root: &Path) -> Vec<PathBuf> {
 /// Where Steam is: ~/.local/share/Steam, or ~/.steam/steam.
 pub fn steam_root(home: &Path) -> PathBuf {
     let a = home.join(".local/share/Steam");
-    if a.is_dir() { a } else { home.join(".steam/steam") }
+    if a.is_dir() {
+        a
+    } else {
+        home.join(".steam/steam")
+    }
 }
 
 fn vdf_pair(line: &str, key: &str) -> Option<String> {
     let l = line.trim();
-    let rest = l.strip_prefix('"')?.strip_prefix(key)?.strip_prefix('"')?.trim_start();
+    let rest = l
+        .strip_prefix('"')?
+        .strip_prefix(key)?
+        .strip_prefix('"')?
+        .trim_start();
     let v = rest.strip_prefix('"')?.strip_suffix('"')?;
     Some(v.replace("\\\\", "\\"))
 }
@@ -160,17 +196,28 @@ fn vdf_value(text: &str, key: &str) -> Option<String> {
 
 /// Unity or Unreal, from the game's files.
 pub fn engine_of(root: &Path) -> Option<String> {
-    if find(root, 3, &|n| matches!(n, "UnityPlayer.dll" | "UnityPlayer.so" | "GameAssembly.dll" | "globalgamemanagers")) {
+    if find(root, 3, &|n| {
+        matches!(
+            n,
+            "UnityPlayer.dll" | "UnityPlayer.so" | "GameAssembly.dll" | "globalgamemanagers"
+        )
+    }) {
         return Some("unity".into());
     }
-    if root.join("Engine/Binaries").is_dir() || find(root, 5, &|n| n.ends_with("-Shipping.exe") || n.ends_with("-Shipping")) {
+    if root.join("Engine/Binaries").is_dir()
+        || find(root, 5, &|n| {
+            n.ends_with("-Shipping.exe") || n.ends_with("-Shipping")
+        })
+    {
         return Some("unreal".into());
     }
     None
 }
 
 fn find(dir: &Path, depth: u32, hit: &dyn Fn(&str) -> bool) -> bool {
-    let Ok(entries) = std::fs::read_dir(dir) else { return false };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
     let mut subdirs = Vec::new();
     for e in entries.flatten() {
         let name = e.file_name();
@@ -196,7 +243,15 @@ mod tests {
     #[test]
     fn ids() {
         let none = |_: &str| None;
-        let cmd = s(&["/x/reaper", "SteamLaunch", "AppId=4508340", "--", "/x/proton", "waitforexitandrun", "/g/NTE.exe"]);
+        let cmd = s(&[
+            "/x/reaper",
+            "SteamLaunch",
+            "AppId=4508340",
+            "--",
+            "/x/proton",
+            "waitforexitandrun",
+            "/g/NTE.exe",
+        ]);
         assert_eq!(app_id(&cmd, none), Some((4508340, IdFrom::Command)));
         let env = |k: &str| (k == "SteamAppId").then(|| "230410".to_string());
         assert_eq!(app_id(&[], env), Some((230410, IdFrom::SteamAppId)));
@@ -209,10 +264,40 @@ mod tests {
 
     #[test]
     fn program_of_the_command() {
-        let p = s(&["/r/reaper", "SteamLaunch", "AppId=1", "--", "/r/_v2-entry-point", "--verb=waitforexitandrun", "--", "/p/proton", "waitforexitandrun", "/lib/steamapps/common/Game/Game.exe", "-dx11"]);
-        assert_eq!(game_program(&p), (Some("/lib/steamapps/common/Game/Game.exe".into()), true));
-        let n = s(&["/r/reaper", "SteamLaunch", "AppId=108600", "--", "/r/_v2-entry-point", "--verb=waitforexitandrun", "--", "/lib/steamapps/common/ProjectZomboid/projectzomboid.sh"]);
-        assert_eq!(game_program(&n), (Some("/lib/steamapps/common/ProjectZomboid/projectzomboid.sh".into()), false));
+        let p = s(&[
+            "/r/reaper",
+            "SteamLaunch",
+            "AppId=1",
+            "--",
+            "/r/_v2-entry-point",
+            "--verb=waitforexitandrun",
+            "--",
+            "/p/proton",
+            "waitforexitandrun",
+            "/lib/steamapps/common/Game/Game.exe",
+            "-dx11",
+        ]);
+        assert_eq!(
+            game_program(&p),
+            (Some("/lib/steamapps/common/Game/Game.exe".into()), true)
+        );
+        let n = s(&[
+            "/r/reaper",
+            "SteamLaunch",
+            "AppId=108600",
+            "--",
+            "/r/_v2-entry-point",
+            "--verb=waitforexitandrun",
+            "--",
+            "/lib/steamapps/common/ProjectZomboid/projectzomboid.sh",
+        ]);
+        assert_eq!(
+            game_program(&n),
+            (
+                Some("/lib/steamapps/common/ProjectZomboid/projectzomboid.sh".into()),
+                false
+            )
+        );
     }
 
     #[test]
@@ -225,7 +310,10 @@ mod tests {
         std::fs::create_dir_all(e.path().join("G/Binaries/Win64")).unwrap();
         std::fs::write(e.path().join("G/Binaries/Win64/G-Win64-Shipping.exe"), "").unwrap();
         assert_eq!(engine_of(e.path()).as_deref(), Some("unreal"));
-        assert_eq!(vdf_pair("\t\t\"path\"\t\t\"/mnt/Storage/Games/Steam\"", "path").as_deref(), Some("/mnt/Storage/Games/Steam"));
+        assert_eq!(
+            vdf_pair("\t\t\"path\"\t\t\"/mnt/Storage/Games/Steam\"", "path").as_deref(),
+            Some("/mnt/Storage/Games/Steam")
+        );
     }
 }
 
@@ -247,7 +335,10 @@ impl Vdf {
     /// The child at this key (keys compare without case, as Steam's do).
     pub fn get(&self, key: &str) -> Option<&Vdf> {
         match self {
-            Vdf::Map(m) => m.iter().find(|(k, _)| k.eq_ignore_ascii_case(key)).map(|(_, v)| v),
+            Vdf::Map(m) => m
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case(key))
+                .map(|(_, v)| v),
             Vdf::Str(_) => None,
         }
     }
@@ -341,11 +432,16 @@ pub struct SteamState {
 pub fn state(steam_root: &Path) -> SteamState {
     let mut s = SteamState::default();
     if let Some(cfg) = localconfig(steam_root)
-        && let Some(apps) = cfg.path(&["UserLocalConfigStore", "Software", "Valve", "Steam", "apps"])
+        && let Some(apps) =
+            cfg.path(&["UserLocalConfigStore", "Software", "Valve", "Steam", "apps"])
     {
         for (id, app) in apps.entries() {
             let Ok(id) = id.parse::<u64>() else { continue };
-            if let Some(t) = app.get("LastPlayed").and_then(Vdf::str).and_then(|t| t.parse().ok()) {
+            if let Some(t) = app
+                .get("LastPlayed")
+                .and_then(Vdf::str)
+                .and_then(|t| t.parse().ok())
+            {
                 s.last_played.insert(id, t);
             }
             if let Some(o) = app.get("LaunchOptions").and_then(Vdf::str) {
@@ -354,7 +450,13 @@ pub fn state(steam_root: &Path) -> SteamState {
         }
     }
     if let Ok(text) = std::fs::read_to_string(steam_root.join("config/config.vdf"))
-        && let Some(map) = Vdf::parse(&text).path(&["InstallConfigStore", "Software", "Valve", "Steam", "CompatToolMapping"])
+        && let Some(map) = Vdf::parse(&text).path(&[
+            "InstallConfigStore",
+            "Software",
+            "Valve",
+            "Steam",
+            "CompatToolMapping",
+        ])
     {
         for (id, entry) in map.entries() {
             if let (Ok(id), Some(name)) = (id.parse::<u64>(), entry.get("name").and_then(Vdf::str))
@@ -370,7 +472,11 @@ pub fn state(steam_root: &Path) -> SteamState {
 
 /// The id Steam uses to start a game: an app id as it is, a shortcut's as (id << 32) | 0x02000000.
 pub fn run_id(id: u64) -> u64 {
-    if id > u64::from(u32::MAX >> 1) { (id << 32) | 0x0200_0000 } else { id }
+    if id > u64::from(u32::MAX >> 1) {
+        (id << 32) | 0x0200_0000
+    } else {
+        id
+    }
 }
 
 #[cfg(test)]
@@ -384,9 +490,16 @@ mod vdf_tests {
             "892970"  { "LastPlayed" "1700000000" }
         } } } } }"#;
         let v = Vdf::parse(text);
-        let apps = v.path(&["UserLocalConfigStore", "Software", "Valve", "Steam", "apps"]).unwrap();
+        let apps = v
+            .path(&["UserLocalConfigStore", "Software", "Valve", "Steam", "apps"])
+            .unwrap();
         assert_eq!(apps.entries().len(), 2);
-        assert_eq!(apps.get("4508340").and_then(|a| a.get("launchoptions")).and_then(Vdf::str), Some("/home/u/.local/bin/nte-launch %command%"));
+        assert_eq!(
+            apps.get("4508340")
+                .and_then(|a| a.get("launchoptions"))
+                .and_then(Vdf::str),
+            Some("/home/u/.local/bin/nte-launch %command%")
+        );
         assert_eq!(run_id(2541017638), (2541017638u64 << 32) | 0x0200_0000);
         assert_eq!(run_id(230410), 230410);
     }

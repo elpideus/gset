@@ -41,7 +41,11 @@ impl When {
                 (part, Test::On)
             };
             let key = key.trim();
-            if key.is_empty() || !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.') {
+            if key.is_empty()
+                || !key
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+            {
                 return Err(format!("“{part}”: expected a setting's name"));
             }
             clauses.push((key.to_string(), test));
@@ -74,14 +78,20 @@ fn list(v: &str) -> Vec<String> {
 }
 
 fn number(v: &str, part: &str) -> Result<f64, String> {
-    v.trim().parse().map_err(|_| format!("“{part}”: expected a number after the comparison"))
+    v.trim()
+        .parse()
+        .map_err(|_| format!("“{part}”: expected a number after the comparison"))
 }
 
 fn matches(v: &Value, text: &str) -> bool {
     match v {
         Value::Str(s) => s == text,
         Value::Bool(b) => *b == matches!(text, "1" | "true" | "on" | "yes"),
-        _ => text.parse::<f64>().ok().zip(v.as_f64()).is_some_and(|(t, x)| (t - x).abs() < 1e-9),
+        _ => text
+            .parse::<f64>()
+            .ok()
+            .zip(v.as_f64())
+            .is_some_and(|(t, x)| (t - x).abs() < 1e-9),
     }
 }
 
@@ -90,19 +100,33 @@ mod tests {
     use super::*;
 
     fn vals(pairs: &[(&str, Value)]) -> BTreeMap<String, Value> {
-        pairs.iter().map(|(k, v)| (k.to_string(), v.clone())).collect()
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.clone()))
+            .collect()
     }
 
     #[test]
     fn conditions() {
-        let v = vals(&[("gamescope", true.into()), ("render_scale", 75.into()), ("mouse", "dpi".into())]);
+        let v = vals(&[
+            ("gamescope", true.into()),
+            ("render_scale", 75.into()),
+            ("mouse", "dpi".into()),
+        ]);
         assert!(When::parse("gamescope").unwrap().holds(&v));
         assert!(!When::parse("!gamescope").unwrap().holds(&v));
-        assert!(When::parse("gamescope, render_scale<100").unwrap().holds(&v));
+        assert!(
+            When::parse("gamescope, render_scale<100")
+                .unwrap()
+                .holds(&v)
+        );
         assert!(!When::parse("render_scale>80").unwrap().holds(&v));
         assert!(When::parse("mouse=dpi|gamescope").unwrap().holds(&v));
         assert!(!When::parse("mouse!=dpi").unwrap().holds(&v));
-        assert!(When::parse("graphics_api!=d3d12").unwrap().holds(&v), "a missing setting is none of the values");
+        assert!(
+            When::parse("graphics_api!=d3d12").unwrap().holds(&v),
+            "a missing setting is none of the values"
+        );
         assert!(When::parse("bad key").is_err());
     }
 }

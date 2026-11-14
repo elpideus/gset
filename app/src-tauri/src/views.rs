@@ -27,7 +27,12 @@ pub fn ctx() -> Result<Ctx, String> {
     let app = AppConfig::load(&paths)?;
     let profiles = Profiles::load(&profile::dirs(&paths));
     let steam_root = steam::steam_root(&paths.home);
-    Ok(Ctx { paths, app, profiles, steam_root })
+    Ok(Ctx {
+        paths,
+        app,
+        profiles,
+        steam_root,
+    })
 }
 
 #[derive(Serialize)]
@@ -39,8 +44,15 @@ pub struct Art {
 }
 
 fn art_for(steam_root: &std::path::Path, id: Option<u64>) -> Art {
-    let get = |k: &str| id.and_then(|id| art::find(steam_root, id, Kind::parse(k)?).map(|_| art::url(id, k)));
-    Art { capsule: get("capsule"), header: get("header"), hero: get("hero"), logo: get("logo") }
+    let get = |k: &str| {
+        id.and_then(|id| art::find(steam_root, id, Kind::parse(k)?).map(|_| art::url(id, k)))
+    };
+    Art {
+        capsule: get("capsule"),
+        header: get("header"),
+        hero: get("hero"),
+        logo: get("logo"),
+    }
 }
 
 fn runner(state: &SteamState, g: &GameConfig) -> Option<String> {
@@ -56,13 +68,24 @@ fn pretty_tool(t: &str) -> String {
     if let Some(rest) = t.strip_prefix("proton_") {
         let rest = rest.replace('_', " ");
         let mut c = rest.chars();
-        return format!("Proton {}", c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default());
+        return format!(
+            "Proton {}",
+            c.next()
+                .map(|f| f.to_uppercase().collect::<String>() + c.as_str())
+                .unwrap_or_default()
+        );
     }
     t.to_string()
 }
 
 fn modified(path: &std::path::Path) -> Option<u64> {
-    std::fs::metadata(path).ok()?.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_secs())
+    std::fs::metadata(path)
+        .ok()?
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|d| d.as_secs())
 }
 
 // ------------------------------------------------------------------------------------------ the library
@@ -120,9 +143,16 @@ pub fn library() -> Result<Vec<LibraryGame>, String> {
                 art: art_for(&c.steam_root, g.info.steam),
                 script: g.info.script.is_some(),
                 profile: p.is_some(),
-                update: g.info.profile.as_deref().is_some_and(|id| profile::pending(&c.paths, id, c.profiles.get(id)).is_some()),
+                update: g
+                    .info
+                    .profile
+                    .as_deref()
+                    .is_some_and(|id| profile::pending(&c.paths, id, c.profiles.get(id)).is_some()),
                 suggestions: resolve::open_suggestions(&schema, p, g, &base).len(),
-                last_played: g.info.steam.and_then(|id| state.last_played.get(&id).copied()),
+                last_played: g
+                    .info
+                    .steam
+                    .and_then(|id| state.last_played.get(&id).copied()),
                 changed: modified(&g.path),
             }
         })
@@ -162,7 +192,16 @@ pub struct PresetView {
 }
 
 fn presets(app: &AppConfig) -> Vec<PresetView> {
-    app.presets.iter().map(|p| PresetView { id: p.id.clone(), name: p.name.clone(), screen: p.screen.clone(), ratio: p.ratio(), values: p.values.clone() }).collect()
+    app.presets
+        .iter()
+        .map(|p| PresetView {
+            id: p.id.clone(),
+            name: p.name.clone(),
+            screen: p.screen.clone(),
+            ratio: p.ratio(),
+            values: p.values.clone(),
+        })
+        .collect()
 }
 
 #[derive(Serialize)]
@@ -237,11 +276,7 @@ pub struct GameView {
 }
 
 pub fn launcher_path(paths: &Paths) -> Option<PathBuf> {
-    let local = paths.home.join(".local/bin/gset");
-    if local.is_file() {
-        return Some(local);
-    }
-    std::env::var_os("PATH").and_then(|p| std::env::split_paths(&p).map(|d| d.join("gset")).find(|f| f.is_file()))
+    crate::launcher::path(paths)
 }
 
 fn launch_kind(g: &GameConfig) -> &'static str {
@@ -265,7 +300,15 @@ pub fn game_view(c: &Ctx, g: &GameConfig, state: &SteamState, screens: &[Screen]
         let plan = plan::build(&schema, &r, &g.info, &incoming, screens, &host);
         views.insert(
             id.unwrap_or("base").to_string(),
-            ViewValues { values: r.values, source: r.source, command: CommandView { argv: plan.argv, env: plan.env, notes: plan.notes } },
+            ViewValues {
+                values: r.values,
+                source: r.source,
+                command: CommandView {
+                    argv: plan.argv,
+                    env: plan.env,
+                    notes: plan.notes,
+                },
+            },
         );
     }
     let base = resolve::resolve(&schema, &c.app, g, None);
@@ -273,7 +316,16 @@ pub fn game_view(c: &Ctx, g: &GameConfig, state: &SteamState, screens: &[Screen]
         .map(|p| {
             p.suggest
                 .iter()
-                .map(|(k, s)| (k.clone(), SuggestionView { value: s.value.clone(), why: s.why.clone(), dismissed: g.dismissed.get(k).is_some_and(|d| d.same(&s.value)) }))
+                .map(|(k, s)| {
+                    (
+                        k.clone(),
+                        SuggestionView {
+                            value: s.value.clone(),
+                            why: s.why.clone(),
+                            dismissed: g.dismissed.get(k).is_some_and(|d| d.same(&s.value)),
+                        },
+                    )
+                })
                 .collect()
         })
         .unwrap_or_default();
@@ -281,18 +333,41 @@ pub fn game_view(c: &Ctx, g: &GameConfig, state: &SteamState, screens: &[Screen]
         .settings
         .iter()
         .filter(|d| d.hidden && g.values.get(&d.key).is_some_and(|v| !v.same(&d.default)))
-        .map(|d| Orphan { key: d.key.clone(), why: p.and_then(|p| p.removed.get(&d.key).cloned()).unwrap_or_default() })
+        .map(|d| Orphan {
+            key: d.key.clone(),
+            why: p
+                .and_then(|p| p.removed.get(&d.key).cloned())
+                .unwrap_or_default(),
+        })
         .collect();
     let update = g.info.profile.as_deref().and_then(|id| {
         let new = profile::pending(&c.paths, id, c.profiles.get(id))?;
         let old = c.profiles.get(id).cloned().unwrap_or_default();
-        Some(UpdateView { from: old.version, to: new.version, changes: profile::diff(&old, &new) })
+        Some(UpdateView {
+            from: old.version,
+            to: new.version,
+            changes: profile::diff(&old, &new),
+        })
     });
     let (preset, why) = resolve::pick_preset(&c.app, g, screens, None);
     let kind = launch_kind(g);
-    let launcher = launcher_path(&c.paths).map(|p| p.display().to_string()).unwrap_or_else(|| "gset".into());
-    let steam_now = if kind == "steam" { g.info.steam.and_then(|id| state.launch_options.get(&id).cloned()) } else { None };
-    let uses_gset = (kind == "steam").then(|| steam_now.as_deref().is_some_and(|o| o.split_whitespace().next().is_some_and(|w| w == "gset" || w.ends_with("/gset"))));
+    let launcher = launcher_path(&c.paths)
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "gset".into());
+    let steam_now = if kind == "steam" {
+        g.info
+            .steam
+            .and_then(|id| state.launch_options.get(&id).cloned())
+    } else {
+        None
+    };
+    let uses_gset = (kind == "steam").then(|| {
+        steam_now.as_deref().is_some_and(|o| {
+            o.split_whitespace()
+                .next()
+                .is_some_and(|w| w == "gset" || w.ends_with("/gset"))
+        })
+    });
     GameView {
         key: g.key.clone(),
         path: g.path.display().to_string(),
@@ -307,7 +382,11 @@ pub fn game_view(c: &Ctx, g: &GameConfig, state: &SteamState, screens: &[Screen]
             runner: runner(state, g),
         },
         art: art_for(&c.steam_root, g.info.steam),
-        profile: p.map(|p| ProfileView { id: p.id.clone(), version: p.version, notes: p.notes.clone() }),
+        profile: p.map(|p| ProfileView {
+            id: p.id.clone(),
+            version: p.version,
+            notes: p.notes.clone(),
+        }),
         update,
         groups: schema::GROUPS,
         open: resolve::open_suggestions(&schema, p, g, &base),
@@ -320,12 +399,19 @@ pub fn game_view(c: &Ctx, g: &GameConfig, state: &SteamState, screens: &[Screen]
         pinned: g.pinned.clone(),
         launch: LaunchView {
             kind,
-            line: if kind == "other" { format!("{launcher} --game={}", g.key) } else { format!("{launcher} %command%") },
+            line: if kind == "other" {
+                format!("{launcher} --game={}", g.key)
+            } else {
+                format!("{launcher} %command%")
+            },
             steam_now,
             uses_gset,
         },
         screens: screens.to_vec(),
-        last_played: g.info.steam.and_then(|id| state.last_played.get(&id).copied()),
+        last_played: g
+            .info
+            .steam
+            .and_then(|id| state.last_played.get(&id).copied()),
     }
 }
 
@@ -350,7 +436,10 @@ pub fn game(key: String) -> Result<GameView, String> {
 fn json_value(v: serde_json::Value) -> Option<Value> {
     match v {
         serde_json::Value::Bool(b) => Some(Value::Bool(b)),
-        serde_json::Value::Number(n) => n.as_i64().map(Value::Int).or_else(|| n.as_f64().map(Value::Float)),
+        serde_json::Value::Number(n) => n
+            .as_i64()
+            .map(Value::Int)
+            .or_else(|| n.as_f64().map(Value::Float)),
         serde_json::Value::String(s) => Some(Value::Str(s)),
         _ => None,
     }
@@ -359,7 +448,13 @@ fn json_value(v: serde_json::Value) -> Option<Value> {
 /// Sets (or with no value, removes) a setting. In a preset's view the change goes to this game's own
 /// version of the preset, or with `everywhere` to the preset itself, for every game.
 #[tauri::command]
-pub fn set_value(key: String, view: String, setting: String, value: Option<serde_json::Value>, everywhere: Option<bool>) -> Result<GameView, String> {
+pub fn set_value(
+    key: String,
+    view: String,
+    setting: String,
+    value: Option<serde_json::Value>,
+    everywhere: Option<bool>,
+) -> Result<GameView, String> {
     let mut c = ctx()?;
     let mut g = load(&c, &key)?;
     let v = value.and_then(json_value);
@@ -367,14 +462,21 @@ pub fn set_value(key: String, view: String, setting: String, value: Option<serde
         g.set(&setting, v);
         g.save()?;
     } else if everywhere.unwrap_or(false) {
-        let mut p = c.app.preset(&view).cloned().ok_or_else(|| format!("no preset called {view}"))?;
+        let mut p = c
+            .app
+            .preset(&view)
+            .cloned()
+            .ok_or_else(|| format!("no preset called {view}"))?;
         match v {
             Some(v) => p.values.insert(setting.clone(), v),
             None => p.values.remove(&setting),
         };
         c.app.put_preset(p);
         c.app.save()?;
-        if g.presets.get(&view).is_some_and(|m| m.contains_key(&setting)) {
+        if g.presets
+            .get(&view)
+            .is_some_and(|m| m.contains_key(&setting))
+        {
             g.set_preset(&view, &setting, None);
             g.save()?;
         }
@@ -389,7 +491,12 @@ pub fn set_value(key: String, view: String, setting: String, value: Option<serde
 pub fn use_suggestions(key: String, settings: Vec<String>) -> Result<GameView, String> {
     let c = ctx()?;
     let mut g = load(&c, &key)?;
-    let p = g.info.profile.as_deref().and_then(|id| c.profiles.get(id)).ok_or("this game has no profile")?;
+    let p = g
+        .info
+        .profile
+        .as_deref()
+        .and_then(|id| c.profiles.get(id))
+        .ok_or("this game has no profile")?;
     for k in settings {
         if let Some(s) = p.suggestion(&k) {
             g.set(&k, Some(s.value.clone()));
@@ -400,12 +507,26 @@ pub fn use_suggestions(key: String, settings: Vec<String>) -> Result<GameView, S
 }
 
 #[tauri::command]
-pub fn dismiss_suggestion(key: String, setting: String, hide: Option<bool>) -> Result<GameView, String> {
+pub fn dismiss_suggestion(
+    key: String,
+    setting: String,
+    hide: Option<bool>,
+) -> Result<GameView, String> {
     let c = ctx()?;
     let mut g = load(&c, &key)?;
     let value = if hide.unwrap_or(true) {
-        let p = g.info.profile.as_deref().and_then(|id| c.profiles.get(id)).ok_or("this game has no profile")?;
-        Some(p.suggestion(&setting).ok_or("no such suggestion")?.value.clone())
+        let p = g
+            .info
+            .profile
+            .as_deref()
+            .and_then(|id| c.profiles.get(id))
+            .ok_or("this game has no profile")?;
+        Some(
+            p.suggestion(&setting)
+                .ok_or("no such suggestion")?
+                .value
+                .clone(),
+        )
     } else {
         None
     };
@@ -448,7 +569,12 @@ pub fn play(key: String) -> Result<(), String> {
     let c = ctx()?;
     let g = load(&c, &key)?;
     let id = match (launch_kind(&g), g.info.steam) {
-        ("other", _) | (_, None) => return Err(format!("{} isn't started by Steam: start it from its own launcher.", g.info.name)),
+        ("other", _) | (_, None) => {
+            return Err(format!(
+                "{} isn't started by Steam: start it from its own launcher.",
+                g.info.name
+            ));
+        }
         (_, Some(id)) => steam::run_id(id),
     };
     std::process::Command::new("xdg-open")
@@ -482,13 +608,25 @@ fn app_view(c: &Ctx) -> AppView {
         version: env!("CARGO_PKG_VERSION"),
         check_updates: c.app.check_updates,
         auto_profile_updates: c.app.auto_profile_updates,
-        new_games: if c.app.new_games == NewGames::Defaults { "defaults" } else { "suggested" },
+        new_games: if c.app.new_games == NewGames::Defaults {
+            "defaults"
+        } else {
+            "suggested"
+        },
         launcher: launcher_path(&c.paths).map(|p| p.display().to_string()),
         presets: presets(&c.app),
         screens: screen::screens(),
         config_dir: c.paths.config.display().to_string(),
         profiles: c.profiles.by_id.len(),
-        problems: problems.into_iter().chain(c.profiles.problems.iter().map(|(f, e)| format!("{}: {e}", f.display()))).collect(),
+        problems: problems
+            .into_iter()
+            .chain(
+                c.profiles
+                    .problems
+                    .iter()
+                    .map(|(f, e)| format!("{}: {e}", f.display())),
+            )
+            .collect(),
     }
 }
 
@@ -499,23 +637,33 @@ pub fn app_settings() -> Result<AppView, String> {
 
 #[tauri::command]
 pub fn set_app_option(key: String, value: serde_json::Value) -> Result<AppView, String> {
-    if !matches!(key.as_str(), "check_updates" | "auto_profile_updates" | "new_games") {
+    if !matches!(
+        key.as_str(),
+        "check_updates" | "auto_profile_updates" | "new_games"
+    ) {
         return Err(format!("no option called {key}"));
     }
     let mut c = ctx()?;
-    c.app.set_option(&key, json_value(value).ok_or("expected a value")?);
+    c.app
+        .set_option(&key, json_value(value).ok_or("expected a value")?);
     c.app.save()?;
     Ok(app_view(&c))
 }
 
 /// Makes a preset, or renames one and changes its screen rule (its values stay).
 #[tauri::command]
-pub fn save_preset(id: Option<String>, name: String, screen: Option<String>) -> Result<AppView, String> {
+pub fn save_preset(
+    id: Option<String>,
+    name: String,
+    screen: Option<String>,
+) -> Result<AppView, String> {
     let name = name.trim().to_string();
     if name.is_empty() {
         return Err("a preset needs a name".into());
     }
-    let screen = screen.map(|s| s.trim().replace(['×', ' '], "x").replace("xx", "x")).filter(|s| !s.is_empty());
+    let screen = screen
+        .map(|s| s.trim().replace(['×', ' '], "x").replace("xx", "x"))
+        .filter(|s| !s.is_empty());
     if let Some(s) = &screen
         && plan::parse_size(s).is_none()
     {
@@ -525,14 +673,26 @@ pub fn save_preset(id: Option<String>, name: String, screen: Option<String>) -> 
     let preset = match id.as_deref().and_then(|id| c.app.preset(id)).cloned() {
         Some(p) => Preset { name, screen, ..p },
         None => {
-            let base = { let s = slug(&name); if s.is_empty() { "preset".to_string() } else { s } };
+            let base = {
+                let s = slug(&name);
+                if s.is_empty() {
+                    "preset".to_string()
+                } else {
+                    s
+                }
+            };
             let mut id = base.clone();
             let mut n = 2;
             while c.app.preset(&id).is_some() || id == "base" {
                 id = format!("{base}-{n}");
                 n += 1;
             }
-            Preset { id, name, screen, values: BTreeMap::new() }
+            Preset {
+                id,
+                name,
+                screen,
+                values: BTreeMap::new(),
+            }
         }
     };
     c.app.put_preset(preset);
@@ -557,13 +717,18 @@ pub fn theme() -> crate::theme::Theme {
 pub fn dump_fixture(dir: &std::path::Path) -> Result<(), String> {
     let c = ctx()?;
     std::fs::create_dir_all(dir.join("games")).map_err(|e| e.to_string())?;
-    let write = |name: &str, v: &dyn erased::Json| std::fs::write(dir.join(name), v.json()).map_err(|e| e.to_string());
+    let write = |name: &str, v: &dyn erased::Json| {
+        std::fs::write(dir.join(name), v.json()).map_err(|e| e.to_string())
+    };
     write("library.json", &library()?)?;
     write("app.json", &app_view(&c))?;
     let state = steam::state(&c.steam_root);
     let screens = screen::screens();
     for g in config::all_games(&c.paths).0 {
-        write(&format!("games/{}.json", g.key), &game_view(&c, &g, &state, &screens))?;
+        write(
+            &format!("games/{}.json", g.key),
+            &game_view(&c, &g, &state, &screens),
+        )?;
     }
     Ok(())
 }

@@ -65,8 +65,12 @@ fn main() -> ExitCode {
             "--help" | "-h" => o.help = true,
             "--version" | "-V" => o.version = true,
             "--import" => o.import = Some(None),
-            _ if a.starts_with("--import=") => o.import = Some(Some(a["--import=".len()..].to_string())),
-            _ if a.starts_with("--game=") => o.game = Some(a["--game=".len()..].trim_end_matches(".toml").to_string()),
+            _ if a.starts_with("--import=") => {
+                o.import = Some(Some(a["--import=".len()..].to_string()))
+            }
+            _ if a.starts_with("--game=") => {
+                o.game = Some(a["--game=".len()..].trim_end_matches(".toml").to_string())
+            }
             _ if a.starts_with("--preset=") => o.preset = Some(a["--preset=".len()..].to_string()),
             _ => break,
         }
@@ -102,31 +106,80 @@ fn launch(paths: &Paths, o: &Opts, args: Vec<String>) -> ExitCode {
     }
     let app = match AppConfig::load(paths) {
         Ok(a) => a,
-        Err(e) => return start_as_is(paths, o, &args, &format!("GSet's settings can't be read ({e}): starting the game without them.")),
+        Err(e) => {
+            return start_as_is(
+                paths,
+                o,
+                &args,
+                &format!("GSet's settings can't be read ({e}): starting the game without them."),
+            );
+        }
     };
     let profiles = Profiles::load(&profile::dirs(paths));
-    let found = match gset_core::find_or_create(paths, &app, &profiles, &args, |k| std::env::var(k).ok(), o.game.as_deref(), o.dry_run) {
+    let found = match gset_core::find_or_create(
+        paths,
+        &app,
+        &profiles,
+        &args,
+        |k| std::env::var(k).ok(),
+        o.game.as_deref(),
+        o.dry_run,
+    ) {
         Ok(Some(f)) => f,
-        Ok(None) => return start_as_is(paths, o, &args, "Steam didn't say which game this is: starting it without settings."),
-        Err(e) => return start_as_is(paths, o, &args, &format!("{e}: starting the game without its settings.")),
+        Ok(None) => {
+            return start_as_is(
+                paths,
+                o,
+                &args,
+                "Steam didn't say which game this is: starting it without settings.",
+            );
+        }
+        Err(e) => {
+            return start_as_is(
+                paths,
+                o,
+                &args,
+                &format!("{e}: starting the game without its settings."),
+            );
+        }
     };
     for w in &found.warnings {
         warn(paths, o.dry_run, "GSet", w);
     }
     let game = found.game;
     if args.is_empty() {
-        return start_as_is(paths, o, &args, &format!("Nothing to start for {}. Steam's launch option is: gset %command%", game.info.name));
+        return start_as_is(
+            paths,
+            o,
+            &args,
+            &format!(
+                "Nothing to start for {}. Steam's launch option is: gset %command%",
+                game.info.name
+            ),
+        );
     }
 
     // a game that a script of yours starts: the script runs instead, as before
     if let Some(script) = &game.info.script {
         let script = paths.expand(script);
         if !is_executable(&script) {
-            return start_as_is(paths, o, &args, &format!("{} (the script of {}) isn't there or can't run: starting the game without its settings.", script.display(), game.info.name));
+            return start_as_is(
+                paths,
+                o,
+                &args,
+                &format!(
+                    "{} (the script of {}) isn't there or can't run: starting the game without its settings.",
+                    script.display(),
+                    game.info.name
+                ),
+            );
         }
         let mut argv = vec![script.display().to_string()];
         argv.extend(args.iter().cloned());
-        let p = Plan { argv, ..Default::default() };
+        let p = Plan {
+            argv,
+            ..Default::default()
+        };
         log_launch(paths, o.dry_run, &game, &found.how, "its own script", &p);
         return run(&p, o.dry_run);
     }
@@ -139,27 +192,45 @@ fn launch(paths: &Paths, o: &Opts, args: Vec<String>) -> ExitCode {
     let host = Host::detect(paths);
     let p = plan::build(&schema, &values, &game.info, &args, &screens, &host);
     let preset_text = match (&preset, &why) {
-        (Some(id), PresetWhy::Screen { mode }) => format!("preset {} (the screen is {mode})", preset_name(&app, id)),
+        (Some(id), PresetWhy::Screen { mode }) => {
+            format!("preset {} (the screen is {mode})", preset_name(&app, id))
+        }
         (Some(id), PresetWhy::Pinned) => format!("preset {} (pinned)", preset_name(&app, id)),
         (Some(id), _) => format!("preset {} (asked for)", preset_name(&app, id)),
         (None, _) => "no preset".into(),
     };
 
     if o.dry_run {
-        println!("game:    {} ({}, {})", game.info.name, game.path.display(), found.how);
+        println!(
+            "game:    {} ({}, {})",
+            game.info.name,
+            game.path.display(),
+            found.how
+        );
         if found.created {
             println!("         new: its file would be made now");
         }
         println!("preset:  {preset_text}");
         if !screens.is_empty() {
-            let s: Vec<String> = screens.iter().map(|s| format!("{} {}@{}", s.name, s.mode(), s.refresh)).collect();
+            let s: Vec<String> = screens
+                .iter()
+                .map(|s| format!("{} {}@{}", s.name, s.mode(), s.refresh))
+                .collect();
             println!("screens: {}", s.join(", "));
         }
         if let Some(v) = p.gpu_check {
             println!("check:   the NVIDIA card first, warn below {v} MiB free");
         }
         if let Some(m) = &p.mouse {
-            println!("mouse:   game-mouse [{}] {}", m.section, if m.start_service { "lowers the DPI while the game is focused" } else { "leaves it alone" });
+            println!(
+                "mouse:   game-mouse [{}] {}",
+                m.section,
+                if m.start_service {
+                    "lowers the DPI while the game is focused"
+                } else {
+                    "leaves it alone"
+                }
+            );
         }
         for f in &p.fixes {
             println!("fix:     {f}");
@@ -175,7 +246,12 @@ fn launch(paths: &Paths, o: &Opts, args: Vec<String>) -> ExitCode {
     }
 
     if found.created {
-        notify("normal", "dialog-information", &format!("GSet set up {}", game.info.name), &format!("Its settings are in GSet now ({}).", game.path.display()));
+        notify(
+            "normal",
+            "dialog-information",
+            &format!("GSet set up {}", game.info.name),
+            &format!("Its settings are in GSet now ({}).", game.path.display()),
+        );
     }
     for n in &p.notes {
         eprintln!("gset: {}: {n}", game.info.name);
@@ -183,7 +259,13 @@ fn launch(paths: &Paths, o: &Opts, args: Vec<String>) -> ExitCode {
     // before the game: the fixes, the mouse, the GPU
     let compat = std::env::var_os("STEAM_COMPAT_DATA_PATH").map(PathBuf::from);
     for f in &p.fixes {
-        match fixes::apply(f, &FixContext { compat_data: compat.as_deref(), dry_run: false }) {
+        match fixes::apply(
+            f,
+            &FixContext {
+                compat_data: compat.as_deref(),
+                dry_run: false,
+            },
+        ) {
             Ok(Some(done)) => append_log(paths, &format!("  fix: {done}")),
             Ok(None) => {}
             Err(e) => warn(paths, false, &game.info.name, &format!("fix {f}: {e}")),
@@ -195,7 +277,14 @@ fn launch(paths: &Paths, o: &Opts, args: Vec<String>) -> ExitCode {
     if let Some(min) = p.gpu_check
         && !gpu_check(paths, &game.info.name, min)
     {
-        append_log(paths, &format!("{} {}: not started, the NVIDIA GPU check failed", gset_core::clock::now_text(), game.info.name));
+        append_log(
+            paths,
+            &format!(
+                "{} {}: not started, the NVIDIA GPU check failed",
+                gset_core::clock::now_text(),
+                game.info.name
+            ),
+        );
         return ExitCode::from(1);
     }
     log_launch(paths, false, &game, &found.how, &preset_text, &p);
@@ -218,7 +307,13 @@ fn start_as_is(paths: &Paths, o: &Opts, args: &[String], why: &str) -> ExitCode 
     if args.is_empty() {
         return ExitCode::from(1);
     }
-    run(&Plan { argv: args.to_vec(), ..Default::default() }, o.dry_run)
+    run(
+        &Plan {
+            argv: args.to_vec(),
+            ..Default::default()
+        },
+        o.dry_run,
+    )
 }
 
 fn run(p: &Plan, dry_run: bool) -> ExitCode {
@@ -226,11 +321,21 @@ fn run(p: &Plan, dry_run: bool) -> ExitCode {
         println!("run:     {}", plan::quote(&p.argv));
         return ExitCode::SUCCESS;
     }
-    let Some((prog, rest)) = p.argv.split_first() else { return ExitCode::from(1) };
-    let err = Command::new(prog).args(rest).envs(p.env.iter().map(|(k, v)| (k, v))).exec();
+    let Some((prog, rest)) = p.argv.split_first() else {
+        return ExitCode::from(1);
+    };
+    let err = Command::new(prog)
+        .args(rest)
+        .envs(p.env.iter().map(|(k, v)| (k, v)))
+        .exec();
     // exec only returns when it failed
     eprintln!("gset: can't start {prog}: {err}");
-    notify("critical", "dialog-error", "The game didn't start", &format!("{prog}: {err}"));
+    notify(
+        "critical",
+        "dialog-error",
+        "The game didn't start",
+        &format!("{prog}: {err}"),
+    );
     ExitCode::from(127)
 }
 
@@ -246,13 +351,24 @@ fn game_mouse(paths: &Paths, m: &plan::MouseAction) {
     if m.skip {
         lines.push(&m.section);
     }
-    let text = if lines.is_empty() { String::new() } else { format!("{}\n", lines.join("\n")) };
+    let text = if lines.is_empty() {
+        String::new()
+    } else {
+        format!("{}\n", lines.join("\n"))
+    };
     let tmp = file.with_extension("gset-tmp");
-    if std::fs::write(&tmp, text).and_then(|()| std::fs::rename(&tmp, &file)).is_err() {
+    if std::fs::write(&tmp, text)
+        .and_then(|()| std::fs::rename(&tmp, &file))
+        .is_err()
+    {
         eprintln!("gset: can't write {}", file.display());
     }
     if m.start_service {
-        let _ = Command::new("systemctl").args(["--user", "start", "--no-block", "game-mouse.service"]).stdout(Stdio::null()).stderr(Stdio::null()).status();
+        let _ = Command::new("systemctl")
+            .args(["--user", "start", "--no-block", "game-mouse.service"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
     }
 }
 
@@ -275,24 +391,43 @@ fn gpu_check(paths: &Paths, game: &str, vram_min: i64) -> bool {
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     let ok = output_within(cmd, Duration::from_secs(15)).is_some_and(|out| {
-        out.lines().any(|l| l.trim_start().strip_prefix("deviceName").is_some_and(|r| r.trim_start().trim_start_matches('=').trim_start().starts_with("NVIDIA")))
+        out.lines().any(|l| {
+            l.trim_start().strip_prefix("deviceName").is_some_and(|r| {
+                r.trim_start()
+                    .trim_start_matches('=')
+                    .trim_start()
+                    .starts_with("NVIDIA")
+            })
+        })
     });
     if !ok {
         notify(
             "critical",
             "dialog-warning",
             "NVIDIA GPU not available",
-            &format!("The NVIDIA driver refused a new Vulkan device, so {game} would start on another GPU or not at all. Quit Discord completely (tray icon → Quit) and launch again; if that doesn't help, close other GPU programs or restart."),
+            &format!(
+                "The NVIDIA driver refused a new Vulkan device, so {game} would start on another GPU or not at all. Quit Discord completely (tray icon → Quit) and launch again; if that doesn't help, close other GPU programs or restart."
+            ),
         );
         return false;
     }
     if vram_min > 0 {
         let mut q = Command::new("nvidia-smi");
-        q.args(["--query-gpu=memory.free", "--format=csv,noheader,nounits"]).stdout(Stdio::piped()).stderr(Stdio::null());
-        if let Some(free) = output_within(q, Duration::from_secs(5)).and_then(|o| o.lines().next().and_then(|l| l.trim().parse::<i64>().ok()))
+        q.args(["--query-gpu=memory.free", "--format=csv,noheader,nounits"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        if let Some(free) = output_within(q, Duration::from_secs(5))
+            .and_then(|o| o.lines().next().and_then(|l| l.trim().parse::<i64>().ok()))
             && free < vram_min
         {
-            notify("normal", "dialog-warning", "Low video memory", &format!("Only {free} MiB of video memory is free. If {game} fails or stutters, close GPU-heavy programs first."));
+            notify(
+                "normal",
+                "dialog-warning",
+                "Low video memory",
+                &format!(
+                    "Only {free} MiB of video memory is free. If {game} fails or stutters, close GPU-heavy programs first."
+                ),
+            );
             append_log(paths, &format!("  low video memory: {free} MiB free"));
         }
     }
@@ -321,7 +456,11 @@ fn output_within(mut cmd: Command, limit: Duration) -> Option<String> {
 // ------------------------------------------------------------------------------------------ messages
 
 fn notify(urgency: &str, icon: &str, title: &str, text: &str) {
-    let _ = Command::new("notify-send").args(["-a", "GSet", "-i", icon, "-u", urgency, title, text]).stdout(Stdio::null()).stderr(Stdio::null()).status();
+    let _ = Command::new("notify-send")
+        .args(["-a", "GSet", "-i", icon, "-u", urgency, title, text])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
 }
 
 fn warn(paths: &Paths, dry_run: bool, title: &str, text: &str) {
@@ -337,7 +476,12 @@ fn log_launch(paths: &Paths, dry_run: bool, game: &GameConfig, how: &str, preset
     if dry_run {
         return;
     }
-    let mut s = format!("{} {} ({}.toml): {how}, {preset}\n", gset_core::clock::now_text(), game.info.name, game.key);
+    let mut s = format!(
+        "{} {} ({}.toml): {how}, {preset}\n",
+        gset_core::clock::now_text(),
+        game.info.name,
+        game.key
+    );
     if !p.env.is_empty() {
         let env: Vec<String> = p.env.iter().map(|(k, v)| format!("{k}={v}")).collect();
         s.push_str(&format!("  env: {}\n", env.join(" ")));
@@ -353,7 +497,11 @@ fn append_log(paths: &Paths, line: &str) {
     if std::fs::metadata(&file).is_ok_and(|m| m.len() > 1 << 20) {
         let _ = std::fs::rename(&file, file.with_extension("log.1"));
     }
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&file) {
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&file)
+    {
         let _ = writeln!(f, "{line}");
     }
 }
@@ -364,13 +512,19 @@ fn is_executable(p: &Path) -> bool {
 }
 
 fn which(name: &str) -> Option<PathBuf> {
-    std::env::var_os("PATH").and_then(|p| std::env::split_paths(&p).map(|d| d.join(name)).find(|f| is_executable(f)))
+    std::env::var_os("PATH").and_then(|p| {
+        std::env::split_paths(&p)
+            .map(|d| d.join(name))
+            .find(|f| is_executable(f))
+    })
 }
 
 // ------------------------------------------------------------------------------------------ the other commands
 
 fn run_import(paths: &Paths, dir: Option<String>, dry_run: bool, force: bool) -> ExitCode {
-    let dir = dir.map(|d| paths.expand(&d)).unwrap_or_else(|| paths.home.join(".config/launch-options"));
+    let dir = dir
+        .map(|d| paths.expand(&d))
+        .unwrap_or_else(|| paths.home.join(".config/launch-options"));
     let profiles = Profiles::load(&profile::dirs(paths));
     let mut app = match AppConfig::load(paths) {
         Ok(a) => a,
@@ -387,16 +541,29 @@ fn run_import(paths: &Paths, dir: Option<String>, dry_run: bool, force: bool) ->
     }
     let mut failed = false;
     for mut r in results {
-        let kind = if r.script_mode { "its own script" } else { "GSet" };
+        let kind = if r.script_mode {
+            "its own script"
+        } else {
+            "GSet"
+        };
         if r.exists && !force {
-            println!("{:<16} skipped: GSet already has {} (--force replaces it)", r.key, r.game.path.display());
+            println!(
+                "{:<16} skipped: GSet already has {} (--force replaces it)",
+                r.key,
+                r.game.path.display()
+            );
             continue;
         }
         let schema = Schema::for_game(r.game.info.profile.as_deref().and_then(|p| profiles.get(p)));
         if !r.script_mode {
             import::pin_against_defaults(&mut r.game, &app, &schema);
         }
-        println!("{:<16} {} → {} (started by {kind})", r.key, r.game.info.name, r.game.path.display());
+        println!(
+            "{:<16} {} → {} (started by {kind})",
+            r.key,
+            r.game.info.name,
+            r.game.path.display()
+        );
         for n in r.notes.iter().chain(&r.unsupported) {
             println!("{:<16}   {n}", "");
         }
@@ -416,14 +583,26 @@ fn run_import(paths: &Paths, dir: Option<String>, dry_run: bool, force: bool) ->
     if dry_run {
         println!("\n(dry run: nothing written)");
     }
-    if failed { ExitCode::from(1) } else { ExitCode::SUCCESS }
+    if failed {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
+    }
 }
 
 fn list(paths: &Paths) -> ExitCode {
     let (games, problems) = config::all_games(paths);
     for g in &games {
-        let id = g.info.steam.map(|i| i.to_string()).unwrap_or_else(|| "-".into());
-        let how = if g.info.script.is_some() { "own script" } else { "GSet" };
+        let id = g
+            .info
+            .steam
+            .map(|i| i.to_string())
+            .unwrap_or_else(|| "-".into());
+        let how = if g.info.script.is_some() {
+            "own script"
+        } else {
+            "GSet"
+        };
         println!("{:<16} {:<12} {:<10} {}", g.key, id, how, g.info.name);
     }
     for p in problems {
@@ -438,13 +617,32 @@ fn screens(paths: &Paths) -> ExitCode {
         println!("No screens found (no Wayland compositor answered).");
     }
     for x in &s {
-        println!("{} {} at {} Hz  {}", x.name, x.mode(), x.refresh, x.description);
+        println!(
+            "{} {} at {} Hz  {}",
+            x.name,
+            x.mode(),
+            x.refresh,
+            x.description
+        );
     }
-    let Ok(app) = AppConfig::load(paths) else { return ExitCode::from(1) };
+    let Ok(app) = AppConfig::load(paths) else {
+        return ExitCode::from(1);
+    };
     for p in &app.presets {
-        let rule = p.screen.as_deref().map(|r| format!("when the screen is {r}")).unwrap_or_else(|| "no screen rule".into());
-        let on = p.screen.as_deref().is_some_and(|r| s.iter().any(|x| x.mode() == r));
-        println!("preset {:<12} {rule}{}", p.name, if on { "  ← in use now" } else { "" });
+        let rule = p
+            .screen
+            .as_deref()
+            .map(|r| format!("when the screen is {r}"))
+            .unwrap_or_else(|| "no screen rule".into());
+        let on = p
+            .screen
+            .as_deref()
+            .is_some_and(|r| s.iter().any(|x| x.mode() == r));
+        println!(
+            "preset {:<12} {rule}{}",
+            p.name,
+            if on { "  ← in use now" } else { "" }
+        );
     }
     ExitCode::SUCCESS
 }

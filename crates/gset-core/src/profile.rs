@@ -95,10 +95,21 @@ impl Profile {
     /// Everything a profile must get right before GSet uses it.
     pub fn check(&self) -> Result<(), String> {
         if self.schema > SCHEMA {
-            return Err(format!("written for a newer GSet (profile format {}, this GSet reads {SCHEMA})", self.schema));
+            return Err(format!(
+                "written for a newer GSet (profile format {}, this GSet reads {SCHEMA})",
+                self.schema
+            ));
         }
-        if self.id.is_empty() || !self.id.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
-            return Err(format!("id “{}”: use lower-case letters, digits and -", self.id));
+        if self.id.is_empty()
+            || !self
+                .id
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        {
+            return Err(format!(
+                "id “{}”: use lower-case letters, digits and -",
+                self.id
+            ));
         }
         let builtin = schema::builtin();
         for k in &self.hide {
@@ -107,11 +118,19 @@ impl Profile {
             }
         }
         for (key, s) in &self.settings {
-            if key.is_empty() || !key.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_') {
-                return Err(format!("settings.{key}: use lower-case letters, digits and _"));
+            if key.is_empty()
+                || !key
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+            {
+                return Err(format!(
+                    "settings.{key}: use lower-case letters, digits and _"
+                ));
             }
             if builtin.iter().any(|d| d.key == *key) {
-                return Err(format!("settings.{key}: GSet already has a setting by that name"));
+                return Err(format!(
+                    "settings.{key}: GSet already has a setting by that name"
+                ));
             }
             if s.label.trim().is_empty() {
                 return Err(format!("settings.{key}: needs a label"));
@@ -120,7 +139,9 @@ impl Profile {
                 env_allowed(name).map_err(|e| format!("settings.{key}.env: {e}"))?;
             }
             if s.args.iter().any(|a| a == "--" || a.trim().is_empty()) {
-                return Err(format!("settings.{key}.args: “--” and empty arguments aren't allowed"));
+                return Err(format!(
+                    "settings.{key}.args: “--” and empty arguments aren't allowed"
+                ));
             }
             if let Some(f) = &s.fix
                 && !fixes::known(f)
@@ -133,19 +154,28 @@ impl Profile {
         }
         let schema = crate::schema::Schema::for_game(Some(self));
         for (key, s) in &self.suggest {
-            let def = schema.get(key).ok_or_else(|| format!("suggest.{key}: no such setting"))?;
+            let def = schema
+                .get(key)
+                .ok_or_else(|| format!("suggest.{key}: no such setting"))?;
             if !def.suggestable {
-                return Err(format!("suggest.{key}: profiles can't suggest this setting"));
+                return Err(format!(
+                    "suggest.{key}: profiles can't suggest this setting"
+                ));
             }
             fits(def, &s.value).map_err(|e| format!("suggest.{key}: {e}"))?;
         }
         for (key, extra) in &self.options {
-            let def = builtin.iter().find(|d| d.key == *key).ok_or_else(|| format!("options.{key}: no such setting"))?;
+            let def = builtin
+                .iter()
+                .find(|d| d.key == *key)
+                .ok_or_else(|| format!("options.{key}: no such setting"))?;
             if def.kind != Kind::Choice {
                 return Err(format!("options.{key}: only lists take extra choices"));
             }
             if def.mono || !def.suggestable {
-                return Err(format!("options.{key}: profiles can't add choices to this setting"));
+                return Err(format!(
+                    "options.{key}: profiles can't add choices to this setting"
+                ));
             }
             if extra.iter().any(|c| c.label.trim().is_empty()) {
                 return Err(format!("options.{key}: every choice needs a label"));
@@ -163,18 +193,28 @@ fn fits(def: &crate::schema::SettingDef, v: &Value) -> Result<(), String> {
             _ => Err("expected true or false".into()),
         },
         Kind::Choice if !def.editable => {
-            if def.choices.iter().any(|c| c.value.same(v)) { Ok(()) } else { Err(format!("“{v}” isn't one of its choices")) }
+            if def.choices.iter().any(|c| c.value.same(v)) {
+                Ok(())
+            } else {
+                Err(format!("“{v}” isn't one of its choices"))
+            }
         }
         Kind::Number | Kind::Choice => {
             let x = v.as_f64().ok_or("expected a number")?;
-            if def.kind == Kind::Number && (def.min.is_some_and(|m| x < m) || def.max.is_some_and(|m| x > m)) {
+            if def.kind == Kind::Number
+                && (def.min.is_some_and(|m| x < m) || def.max.is_some_and(|m| x > m))
+            {
                 return Err(format!("{x} is out of range"));
             }
             Ok(())
         }
         Kind::Resolution => {
             let s = v.as_str();
-            if s.is_empty() || s == "native" || crate::plan::parse_size(s).is_some() { Ok(()) } else { Err("expected WIDTHxHEIGHT".into()) }
+            if s.is_empty() || s == "native" || crate::plan::parse_size(s).is_some() {
+                Ok(())
+            } else {
+                Err("expected WIDTHxHEIGHT".into())
+            }
         }
         Kind::Text => Ok(()),
     }
@@ -182,17 +222,32 @@ fn fits(def: &crate::schema::SettingDef, v: &Value) -> Result<(), String> {
 
 /// Variables a profile may set: graphics and audio switches, never paths or anything that loads code.
 pub fn env_allowed(name: &str) -> Result<(), String> {
-    const PREFIXES: &[&str] =
-        &["DXVK_", "VKD3D_", "PROTON_", "WINE", "MANGOHUD", "__GL_", "__NV_", "RADV_", "MESA_", "SDL_", "PULSE_", "NV_", "ENABLE_", "DISABLE_"];
-    const NEVER: &[&str] = &["PATH", "FILE", "PRELOAD", "LIBRARY", "LOADER", "SERVER", "PREFIX", "DIR", "LAYER", "AUDIT", "EXEC"];
-    if name.is_empty() || !name.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_') {
-        return Err(format!("“{name}”: variable names are upper-case letters, digits and _"));
+    const PREFIXES: &[&str] = &[
+        "DXVK_", "VKD3D_", "PROTON_", "WINE", "MANGOHUD", "__GL_", "__NV_", "RADV_", "MESA_",
+        "SDL_", "PULSE_", "NV_", "ENABLE_", "DISABLE_",
+    ];
+    const NEVER: &[&str] = &[
+        "PATH", "FILE", "PRELOAD", "LIBRARY", "LOADER", "SERVER", "PREFIX", "DIR", "LAYER",
+        "AUDIT", "EXEC",
+    ];
+    if name.is_empty()
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+    {
+        return Err(format!(
+            "“{name}”: variable names are upper-case letters, digits and _"
+        ));
     }
     if !PREFIXES.iter().any(|p| name.starts_with(p)) {
-        return Err(format!("“{name}” isn't one of the variables profiles may set"));
+        return Err(format!(
+            "“{name}” isn't one of the variables profiles may set"
+        ));
     }
     if NEVER.iter().any(|w| name.contains(w)) {
-        return Err(format!("“{name}”: profiles may not set paths or anything that loads code"));
+        return Err(format!(
+            "“{name}”: profiles may not set paths or anything that loads code"
+        ));
     }
     Ok(())
 }
@@ -210,11 +265,20 @@ impl Profiles {
     pub fn load(dirs: &[PathBuf]) -> Profiles {
         let mut out = Profiles::default();
         for dir in dirs {
-            let Ok(entries) = std::fs::read_dir(dir) else { continue };
-            let mut files: Vec<_> = entries.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "toml")).collect();
+            let Ok(entries) = std::fs::read_dir(dir) else {
+                continue;
+            };
+            let mut files: Vec<_> = entries
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.extension().is_some_and(|x| x == "toml"))
+                .collect();
             files.sort();
             for f in files {
-                match std::fs::read_to_string(&f).map_err(|e| e.to_string()).and_then(|t| Profile::parse(&t)) {
+                match std::fs::read_to_string(&f)
+                    .map_err(|e| e.to_string())
+                    .and_then(|t| Profile::parse(&t))
+                {
                     Ok(p) => {
                         out.by_id.insert(p.id.clone(), p);
                     }
@@ -255,72 +319,156 @@ pub fn read(path: &Path) -> Result<Profile, String> {
 #[derive(Clone, Debug, Serialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Change {
-    NewSetting { key: String, label: String, help: String },
-    RemovedSetting { key: String, label: String, why: String },
-    Suggestion { key: String, label: String, value: Value, why: String, before: Option<Value> },
-    DroppedSuggestion { key: String, label: String },
-    NewChoice { key: String, label: String, choice: String },
-    Notes { notes: Vec<String> },
-    Name { name: String },
+    NewSetting {
+        key: String,
+        label: String,
+        help: String,
+    },
+    RemovedSetting {
+        key: String,
+        label: String,
+        why: String,
+    },
+    Suggestion {
+        key: String,
+        label: String,
+        value: Value,
+        why: String,
+        before: Option<Value>,
+    },
+    DroppedSuggestion {
+        key: String,
+        label: String,
+    },
+    NewChoice {
+        key: String,
+        label: String,
+        choice: String,
+    },
+    Notes {
+        notes: Vec<String>,
+    },
+    Name {
+        name: String,
+    },
 }
 
 /// What a newer version of a profile changes.
 pub fn diff(old: &Profile, new: &Profile) -> Vec<Change> {
     let before = crate::schema::Schema::for_game(Some(old));
     let after = crate::schema::Schema::for_game(Some(new));
-    let label = |key: &str| after.get(key).or_else(|| before.get(key)).map(|d| d.label.clone()).unwrap_or_else(|| key.to_string());
+    let label = |key: &str| {
+        after
+            .get(key)
+            .or_else(|| before.get(key))
+            .map(|d| d.label.clone())
+            .unwrap_or_else(|| key.to_string())
+    };
     let why = |key: &str| new.removed.get(key).cloned().unwrap_or_default();
     let mut out = Vec::new();
     if old.name != new.name {
-        out.push(Change::Name { name: new.name.clone() });
+        out.push(Change::Name {
+            name: new.name.clone(),
+        });
     }
     for (key, s) in &new.settings {
         if !old.settings.contains_key(key) {
-            out.push(Change::NewSetting { key: key.clone(), label: s.label.clone(), help: s.help.clone() });
+            out.push(Change::NewSetting {
+                key: key.clone(),
+                label: s.label.clone(),
+                help: s.help.clone(),
+            });
         }
     }
     for key in old.hide.iter().filter(|k| !new.hide.contains(k)) {
-        out.push(Change::NewSetting { key: key.clone(), label: label(key), help: String::new() });
+        out.push(Change::NewSetting {
+            key: key.clone(),
+            label: label(key),
+            help: String::new(),
+        });
     }
-    for key in old.settings.keys().filter(|k| !new.settings.contains_key(*k)).chain(new.hide.iter().filter(|k| !old.hide.contains(k))) {
-        out.push(Change::RemovedSetting { key: key.clone(), label: label(key), why: why(key) });
+    for key in old
+        .settings
+        .keys()
+        .filter(|k| !new.settings.contains_key(*k))
+        .chain(new.hide.iter().filter(|k| !old.hide.contains(k)))
+    {
+        out.push(Change::RemovedSetting {
+            key: key.clone(),
+            label: label(key),
+            why: why(key),
+        });
     }
     for (key, s) in &new.suggest {
         let prev = old.suggest.get(key);
         if prev.is_none_or(|p| !p.value.same(&s.value)) {
-            out.push(Change::Suggestion { key: key.clone(), label: label(key), value: s.value.clone(), why: s.why.clone(), before: prev.map(|p| p.value.clone()) });
+            out.push(Change::Suggestion {
+                key: key.clone(),
+                label: label(key),
+                value: s.value.clone(),
+                why: s.why.clone(),
+                before: prev.map(|p| p.value.clone()),
+            });
         }
     }
-    for key in old.suggest.keys().filter(|k| !new.suggest.contains_key(*k) && after.get(k).is_some_and(|d| !d.hidden)) {
-        out.push(Change::DroppedSuggestion { key: key.clone(), label: label(key) });
+    for key in old
+        .suggest
+        .keys()
+        .filter(|k| !new.suggest.contains_key(*k) && after.get(k).is_some_and(|d| !d.hidden))
+    {
+        out.push(Change::DroppedSuggestion {
+            key: key.clone(),
+            label: label(key),
+        });
     }
     for (key, choices) in &new.options {
         let had = old.options.get(key);
         for c in choices {
             if !had.is_some_and(|h| h.iter().any(|x| x.value.same(&c.value))) {
-                out.push(Change::NewChoice { key: key.clone(), label: label(key), choice: c.label.clone() });
+                out.push(Change::NewChoice {
+                    key: key.clone(),
+                    label: label(key),
+                    choice: c.label.clone(),
+                });
             }
         }
     }
     if old.notes != new.notes {
-        out.push(Change::Notes { notes: new.notes.clone() });
+        out.push(Change::Notes {
+            notes: new.notes.clone(),
+        });
     }
     out
 }
 
 /// Downloaded profiles wait in profiles-pending/ until they're applied (by you, or by
 /// "Update profiles automatically"). Applying keeps the one replaced, for Undo.
-pub fn pending(paths: &crate::paths::Paths, id: &str, current: Option<&Profile>) -> Option<Profile> {
-    let p = read(&paths.data.join("profiles-pending").join(format!("{id}.toml"))).ok()?;
+pub fn pending(
+    paths: &crate::paths::Paths,
+    id: &str,
+    current: Option<&Profile>,
+) -> Option<Profile> {
+    let p = read(
+        &paths
+            .data
+            .join("profiles-pending")
+            .join(format!("{id}.toml")),
+    )
+    .ok()?;
     (current.is_none_or(|c| p.version > c.version)).then_some(p)
 }
 
 pub fn apply_pending(paths: &crate::paths::Paths, id: &str) -> Result<(), String> {
-    let from = paths.data.join("profiles-pending").join(format!("{id}.toml"));
+    let from = paths
+        .data
+        .join("profiles-pending")
+        .join(format!("{id}.toml"));
     let dir = paths.data.join("profiles");
     let to = dir.join(format!("{id}.toml"));
     let keep = paths.data.join("profiles-previous");
-    std::fs::create_dir_all(&dir).and_then(|()| std::fs::create_dir_all(&keep)).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dir)
+        .and_then(|()| std::fs::create_dir_all(&keep))
+        .map_err(|e| e.to_string())?;
     if to.exists() {
         std::fs::copy(&to, keep.join(format!("{id}.toml"))).map_err(|e| e.to_string())?;
     }
@@ -330,7 +478,10 @@ pub fn apply_pending(paths: &crate::paths::Paths, id: &str) -> Result<(), String
 /// Undoes apply_pending: the replaced profile comes back, the new one waits again.
 pub fn undo_apply(paths: &crate::paths::Paths, id: &str) -> Result<(), String> {
     let cur = paths.data.join("profiles").join(format!("{id}.toml"));
-    let prev = paths.data.join("profiles-previous").join(format!("{id}.toml"));
+    let prev = paths
+        .data
+        .join("profiles-previous")
+        .join(format!("{id}.toml"));
     let pend = paths.data.join("profiles-pending");
     std::fs::create_dir_all(&pend).map_err(|e| e.to_string())?;
     std::fs::rename(&cur, pend.join(format!("{id}.toml"))).map_err(|e| e.to_string())?;
@@ -379,11 +530,23 @@ fix = "nte-launcher-windows"
         let old = Profile::parse("schema = 1\nid = \"n\"\nversion = 14\nname = \"N\"\n[suggest]\nlow_latency = { value = true }\n").unwrap();
         let new = Profile::parse(NTE).unwrap();
         let d = diff(&old, &new);
-        assert!(d.iter().any(|c| matches!(c, Change::NewSetting { key, .. } if key == "descriptor_heap")));
+        assert!(
+            d.iter()
+                .any(|c| matches!(c, Change::NewSetting { key, .. } if key == "descriptor_heap"))
+        );
         assert!(d.iter().any(|c| matches!(c, Change::RemovedSetting { key, why, .. } if key == "low_latency" && why.contains("1.4"))));
-        assert!(d.iter().any(|c| matches!(c, Change::Suggestion { key, before: None, .. } if key == "render_scale")));
-        assert!(d.iter().any(|c| matches!(c, Change::NewChoice { choice, .. } if choice.starts_with('L'))));
-        assert!(!d.iter().any(|c| matches!(c, Change::DroppedSuggestion { .. })), "a hidden setting's suggestion isn't reported twice");
+        assert!(d.iter().any(
+            |c| matches!(c, Change::Suggestion { key, before: None, .. } if key == "render_scale")
+        ));
+        assert!(
+            d.iter()
+                .any(|c| matches!(c, Change::NewChoice { choice, .. } if choice.starts_with('L')))
+        );
+        assert!(
+            !d.iter()
+                .any(|c| matches!(c, Change::DroppedSuggestion { .. })),
+            "a hidden setting's suggestion isn't reported twice"
+        );
     }
 
     #[test]
@@ -392,23 +555,48 @@ fix = "nte-launcher-windows"
         assert_eq!(p.steam, vec![4508340]);
         let s = crate::schema::Schema::for_game(Some(&p));
         assert!(s.get("low_latency").unwrap().hidden);
-        assert!(s.get("dlss_preset").unwrap().choices.iter().any(|c| c.label.starts_with('L')));
+        assert!(
+            s.get("dlss_preset")
+                .unwrap()
+                .choices
+                .iter()
+                .any(|c| c.label.starts_with('L'))
+        );
         assert!(s.get("descriptor_heap").unwrap().from_profile);
     }
 
     #[test]
     fn profiles_cannot_run_things() {
-        let bad = |extra: &str| Profile::parse(&format!("schema = 1\nid = \"x\"\nversion = 1\nname = \"X\"\n{extra}")).unwrap_err();
-        assert!(bad("[settings.a]\nlabel = \"A\"\nenv = { LD_PRELOAD = \"/tmp/x.so\" }").contains("LD_PRELOAD"));
-        assert!(bad("[settings.a]\nlabel = \"A\"\nenv = { DXVK_CONFIG_FILE = \"/tmp/x\" }").contains("may not"));
-        assert!(bad("[settings.a]\nlabel = \"A\"\nenv = { HOME = \"/tmp\" }").contains("isn't one of"));
+        let bad = |extra: &str| {
+            Profile::parse(&format!(
+                "schema = 1\nid = \"x\"\nversion = 1\nname = \"X\"\n{extra}"
+            ))
+            .unwrap_err()
+        };
+        assert!(
+            bad("[settings.a]\nlabel = \"A\"\nenv = { LD_PRELOAD = \"/tmp/x.so\" }")
+                .contains("LD_PRELOAD")
+        );
+        assert!(
+            bad("[settings.a]\nlabel = \"A\"\nenv = { DXVK_CONFIG_FILE = \"/tmp/x\" }")
+                .contains("may not")
+        );
+        assert!(
+            bad("[settings.a]\nlabel = \"A\"\nenv = { HOME = \"/tmp\" }").contains("isn't one of")
+        );
         assert!(bad("[settings.a]\nlabel = \"A\"\nargs = [\"--\", \"sh\"]").contains("--"));
         assert!(bad("[settings.a]\nlabel = \"A\"\nfix = \"rm-rf\"").contains("no fix"));
-        assert!(bad("[suggest]\nrun_before = { value = \"curl x | sh\" }").contains("can't suggest"));
+        assert!(
+            bad("[suggest]\nrun_before = { value = \"curl x | sh\" }").contains("can't suggest")
+        );
         assert!(bad("[suggest]\nenv = { value = \"LD_PRELOAD=x\" }").contains("can't suggest"));
         assert!(bad("[suggest]\nupscaler = { value = \"magic\" }").contains("isn't one of"));
         assert!(bad("[settings.gamescope]\nlabel = \"G\"").contains("already"));
         assert!(bad("unknown = 1").contains("unknown"));
-        assert!(Profile::parse("schema = 9\nid = \"x\"\nversion = 1\nname = \"X\"").unwrap_err().contains("newer GSet"));
+        assert!(
+            Profile::parse("schema = 9\nid = \"x\"\nversion = 1\nname = \"X\"")
+                .unwrap_err()
+                .contains("newer GSet")
+        );
     }
 }

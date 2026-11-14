@@ -32,7 +32,8 @@ pub fn screens() -> Vec<Screen> {
     std::thread::spawn(move || {
         let _ = tx.send(ask_compositor().unwrap_or_default());
     });
-    rx.recv_timeout(Duration::from_millis(500)).unwrap_or_default()
+    rx.recv_timeout(Duration::from_millis(500))
+        .unwrap_or_default()
 }
 
 fn parse_fake(text: &str) -> Vec<Screen> {
@@ -40,7 +41,13 @@ fn parse_fake(text: &str) -> Vec<Screen> {
         .filter_map(|s| {
             let (size, hz) = s.trim().split_once('@').unwrap_or((s.trim(), "60"));
             let (w, h) = crate::plan::parse_size(size)?;
-            Some(Screen { name: "test".into(), description: String::new(), width: w, height: h, refresh: hz.parse().unwrap_or(60) })
+            Some(Screen {
+                name: "test".into(),
+                description: String::new(),
+                width: w,
+                height: h,
+                refresh: hz.parse().unwrap_or(60),
+            })
         })
         .collect()
 }
@@ -60,8 +67,19 @@ struct State {
 }
 
 impl Dispatch<wl_registry::WlRegistry, ()> for State {
-    fn event(state: &mut Self, registry: &wl_registry::WlRegistry, event: wl_registry::Event, _: &(), _: &Connection, qh: &QueueHandle<Self>) {
-        if let wl_registry::Event::Global { name, interface, version } = event
+    fn event(
+        state: &mut Self,
+        registry: &wl_registry::WlRegistry,
+        event: wl_registry::Event,
+        _: &(),
+        _: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        if let wl_registry::Event::Global {
+            name,
+            interface,
+            version,
+        } = event
             && interface == "wl_output"
         {
             let index = state.outputs.len();
@@ -72,10 +90,24 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
 }
 
 impl Dispatch<wl_output::WlOutput, usize> for State {
-    fn event(state: &mut Self, _: &wl_output::WlOutput, event: wl_output::Event, index: &usize, _: &Connection, _: &QueueHandle<Self>) {
-        let Some(out) = state.outputs.get_mut(*index) else { return };
+    fn event(
+        state: &mut Self,
+        _: &wl_output::WlOutput,
+        event: wl_output::Event,
+        index: &usize,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let Some(out) = state.outputs.get_mut(*index) else {
+            return;
+        };
         match event {
-            wl_output::Event::Mode { flags: WEnum::Value(flags), width, height, refresh } if flags.contains(wl_output::Mode::Current) => {
+            wl_output::Event::Mode {
+                flags: WEnum::Value(flags),
+                width,
+                height,
+                refresh,
+            } if flags.contains(wl_output::Mode::Current) => {
                 out.width = width;
                 out.height = height;
                 out.refresh_mhz = refresh;

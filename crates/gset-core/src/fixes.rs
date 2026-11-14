@@ -29,24 +29,40 @@ pub fn known(id: &str) -> bool {
 
 /// Runs a fix. Ok(Some(text)) says what it changed, Ok(None) that there was nothing to do.
 pub fn apply(id: &str, ctx: &FixContext) -> Result<Option<String>, String> {
-    let fix = FIXES.iter().find(|f| f.id == id).ok_or_else(|| format!("no fix called {id}"))?;
+    let fix = FIXES
+        .iter()
+        .find(|f| f.id == id)
+        .ok_or_else(|| format!("no fix called {id}"))?;
     (fix.run)(ctx)
 }
 
 /// HKCU\Software\PWRD\MobilePCGame\3000001: drop the "wnd" and "f" values.
 fn nte_launcher_windows(ctx: &FixContext) -> Result<Option<String>, String> {
-    let Some(compat) = ctx.compat_data else { return Ok(None) };
+    let Some(compat) = ctx.compat_data else {
+        return Ok(None);
+    };
     let reg = compat.join("pfx/user.reg");
-    let Ok(text) = std::fs::read_to_string(&reg) else { return Ok(None) };
-    let (out, dropped) = drop_values(&text, r"[Software\\PWRD\\MobilePCGame\\3000001]", &["\"wnd\"=", "\"f\"="]);
+    let Ok(text) = std::fs::read_to_string(&reg) else {
+        return Ok(None);
+    };
+    let (out, dropped) = drop_values(
+        &text,
+        r"[Software\\PWRD\\MobilePCGame\\3000001]",
+        &["\"wnd\"=", "\"f\"="],
+    );
     if dropped == 0 {
         return Ok(None);
     }
     if !ctx.dry_run {
         let tmp = reg.with_extension("reg.gset-tmp");
-        std::fs::write(&tmp, out).and_then(|()| std::fs::rename(&tmp, &reg)).map_err(|e| format!("{}: {e}", reg.display()))?;
+        std::fs::write(&tmp, out)
+            .and_then(|()| std::fs::rename(&tmp, &reg))
+            .map_err(|e| format!("{}: {e}", reg.display()))?;
     }
-    Ok(Some(format!("cleared NTE's window list ({dropped} values) in {}", reg.display())))
+    Ok(Some(format!(
+        "cleared NTE's window list ({dropped} values) in {}",
+        reg.display()
+    )))
 }
 
 /// Removes the lines starting with any of `values` inside the registry section whose header starts
@@ -74,9 +90,16 @@ mod tests {
     #[test]
     fn nte_fix_drops_only_its_values() {
         let reg = "WINE REGISTRY Version 2\n\n[Software\\\\Other] 1\n\"wnd\"=\"keep\"\n\n[Software\\\\PWRD\\\\MobilePCGame\\\\3000001] 1700000000\n#time=1\n\"f\"=dword:00000001\n\"wnd\"=hex:01,02\n\"other\"=\"keep\"\n";
-        let (out, n) = drop_values(reg, r"[Software\\PWRD\\MobilePCGame\\3000001]", &["\"wnd\"=", "\"f\"="]);
+        let (out, n) = drop_values(
+            reg,
+            r"[Software\\PWRD\\MobilePCGame\\3000001]",
+            &["\"wnd\"=", "\"f\"="],
+        );
         assert_eq!(n, 2);
-        assert!(out.contains("\"wnd\"=\"keep\""), "values in other sections stay");
+        assert!(
+            out.contains("\"wnd\"=\"keep\""),
+            "values in other sections stay"
+        );
         assert!(out.contains("\"other\"=\"keep\""));
         assert!(!out.contains("hex:01,02"));
     }
@@ -86,10 +109,20 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("pfx")).unwrap();
         let reg = dir.path().join("pfx/user.reg");
-        std::fs::write(&reg, "[Software\\\\PWRD\\\\MobilePCGame\\\\3000001] 1\n\"wnd\"=hex:01\n").unwrap();
-        let ctx = FixContext { compat_data: Some(dir.path()), dry_run: false };
+        std::fs::write(
+            &reg,
+            "[Software\\\\PWRD\\\\MobilePCGame\\\\3000001] 1\n\"wnd\"=hex:01\n",
+        )
+        .unwrap();
+        let ctx = FixContext {
+            compat_data: Some(dir.path()),
+            dry_run: false,
+        };
         assert!(apply("nte-launcher-windows", &ctx).unwrap().is_some());
         assert!(!std::fs::read_to_string(&reg).unwrap().contains("wnd"));
-        assert!(apply("nte-launcher-windows", &ctx).unwrap().is_none(), "nothing left to do");
+        assert!(
+            apply("nte-launcher-windows", &ctx).unwrap().is_none(),
+            "nothing left to do"
+        );
     }
 }

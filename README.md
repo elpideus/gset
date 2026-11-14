@@ -12,8 +12,27 @@ MangoHud, the OBS capture hook, the graphics API, DLSS presets, frame caps, VSyn
 variables and more. Then it gets out of the way: GSet replaces itself with the game, so nothing of
 it keeps running while you play.
 
-> **Status:** early. The launcher works and is tested against the shell scripts it replaces; the
-> settings window, signed releases and the in-app updater come next.
+> **Status:** early (0.1). It works, and it's tested against the launch scripts it replaced, but
+> expect rough edges.
+
+## Install
+
+| | Download |
+| --- | --- |
+| **Any distribution** (Arch, CachyOS, SteamOS, Bazzite…) | [GSet-x86_64.AppImage](https://github.com/elpideus/gset/releases/latest/download/GSet-x86_64.AppImage). Make it executable and run it. |
+| **Debian, Ubuntu** and derivatives | [gset_amd64.deb](https://github.com/elpideus/gset/releases/latest/download/gset_amd64.deb) |
+| **Fedora, openSUSE** and derivatives | [gset.x86_64.rpm](https://github.com/elpideus/gset/releases/latest/download/gset.x86_64.rpm) |
+| **Only the launcher**, no window | [gset-x86_64-linux](https://github.com/elpideus/gset/releases/latest/download/gset-x86_64-linux), to put in your PATH as `gset` |
+
+Then, in Steam: a game → Properties → Launch Options:
+
+```
+/home/you/.local/bin/gset %command%
+```
+
+The AppImage puts the launcher in `~/.local/bin/gset` the first time it runs; the packages install
+it as `/usr/bin/gset`. GSet's window shows the exact line for each game, with a Copy button.
+GSet updates itself from its settings (signed updates from this repository's releases).
 
 ## How settings work
 
@@ -55,8 +74,12 @@ gset --screens         the screens that are on, and which preset applies
 ## Building
 
 ```
-cargo build --release
+cargo build --release            # the launcher (target/release/gset)
+cd app && pnpm install && pnpm tauri build --no-bundle   # the window (target/release/gset-app)
 ```
+
+The window needs WebKitGTK 4.1 and its development files. Releases are built and signed by GitHub
+Actions: see [docs/releasing.md](docs/releasing.md).
 
 ## Licence
 

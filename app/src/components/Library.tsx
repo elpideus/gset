@@ -204,6 +204,7 @@ export function Sidebar() {
   const sort = useStore((s) => s.sort);
   const setSort = useStore((s) => s.setSort);
   const app = useStore((s) => s.app);
+  const appUpdate = useStore((s) => s.appUpdate);
   const open = useStore((s) => s.open);
   const setSide = useStore((s) => s.setSide);
   const found = useFound();
@@ -267,7 +268,13 @@ export function Sidebar() {
         </motion.div>
       )}
       <div className="foot">
-        <span className="ver">GSet {app?.version}</span>
+        {appUpdate ? (
+          <button type="button" className="link ver" style={{ textAlign: "left", paddingLeft: 0 }} onClick={() => open("settings")}>
+            <b>GSet {appUpdate.version}</b> is available
+          </button>
+        ) : (
+          <span className="ver">GSet {app?.version}</span>
+        )}
         <button type="button" className="btn ghost icon" aria-label="Settings" title="Settings" onClick={() => open("settings")}>
           <Settings2 size={16} />
         </button>

@@ -69,13 +69,34 @@ pub struct Group {
 }
 
 pub const GROUPS: &[Group] = &[
-    Group { id: "screen", title: "Screen" },
-    Group { id: "pacing", title: "Frame pacing" },
-    Group { id: "overlay", title: "Overlay and capture" },
-    Group { id: "graphics", title: "Graphics" },
-    Group { id: "mouse", title: "Mouse" },
-    Group { id: "game", title: "This game" },
-    Group { id: "advanced", title: "Advanced" },
+    Group {
+        id: "screen",
+        title: "Screen",
+    },
+    Group {
+        id: "pacing",
+        title: "Frame pacing",
+    },
+    Group {
+        id: "overlay",
+        title: "Overlay and capture",
+    },
+    Group {
+        id: "graphics",
+        title: "Graphics",
+    },
+    Group {
+        id: "mouse",
+        title: "Mouse",
+    },
+    Group {
+        id: "game",
+        title: "This game",
+    },
+    Group {
+        id: "advanced",
+        title: "Advanced",
+    },
 ];
 
 struct B(SettingDef);
@@ -115,11 +136,23 @@ impl B {
         self
     }
     fn choices(mut self, c: &[(&str, &str)]) -> B {
-        self.0.choices = c.iter().map(|(v, l)| Choice { value: Value::str(*v), label: (*l).into() }).collect();
+        self.0.choices = c
+            .iter()
+            .map(|(v, l)| Choice {
+                value: Value::str(*v),
+                label: (*l).into(),
+            })
+            .collect();
         self
     }
     fn number_choices(mut self, c: &[(i64, &str)]) -> B {
-        self.0.choices = c.iter().map(|(v, l)| Choice { value: Value::Int(*v), label: (*l).into() }).collect();
+        self.0.choices = c
+            .iter()
+            .map(|(v, l)| Choice {
+                value: Value::Int(*v),
+                label: (*l).into(),
+            })
+            .collect();
         self
     }
     fn range(mut self, min: f64, max: f64, step: f64, unit: &str) -> B {
@@ -263,17 +296,26 @@ impl Schema {
                 if let Some(extra) = p.options.get(&def.key) {
                     for c in extra {
                         if !def.choices.iter().any(|have| have.value.same(&c.value)) {
-                            def.choices.push(crate::schema::Choice { value: c.value.clone(), label: c.label.clone() });
+                            def.choices.push(crate::schema::Choice {
+                                value: c.value.clone(),
+                                label: c.label.clone(),
+                            });
                         }
                     }
                 }
             }
             for (key, s) in &p.settings {
-                let mut def = B::new(key, "game", &s.label, Kind::Toggle, false).help(&s.help).0;
+                let mut def = B::new(key, "game", &s.label, Kind::Toggle, false)
+                    .help(&s.help)
+                    .0;
                 def.when = s.when.clone();
                 def.off = s.off.clone();
                 def.from_profile = true;
-                def.effect = Effect { env: s.env.clone(), args: s.args.clone(), fix: s.fix.clone() };
+                def.effect = Effect {
+                    env: s.env.clone(),
+                    args: s.args.clone(),
+                    fix: s.fix.clone(),
+                };
                 settings.push(def);
             }
         }
@@ -285,7 +327,10 @@ impl Schema {
     }
 
     pub fn defaults(&self) -> BTreeMap<String, Value> {
-        self.settings.iter().map(|d| (d.key.clone(), d.default.clone())).collect()
+        self.settings
+            .iter()
+            .map(|d| (d.key.clone(), d.default.clone()))
+            .collect()
     }
 
     /// Whether a setting applies, given the other values.
@@ -310,15 +355,27 @@ mod tests {
         keys.dedup();
         assert_eq!(n, keys.len(), "two settings share a key");
         for d in &all {
-            assert!(GROUPS.iter().any(|g| g.id == d.group), "{} has an unknown group", d.key);
+            assert!(
+                GROUPS.iter().any(|g| g.id == d.group),
+                "{} has an unknown group",
+                d.key
+            );
             if let Some(w) = &d.when {
                 let parsed = When::parse(w).unwrap_or_else(|e| panic!("{}: {e}", d.key));
                 for k in parsed.keys() {
-                    assert!(k == "engine" || all.iter().any(|o| o.key == k), "{} depends on unknown {k}", d.key);
+                    assert!(
+                        k == "engine" || all.iter().any(|o| o.key == k),
+                        "{} depends on unknown {k}",
+                        d.key
+                    );
                 }
             }
             if d.kind == Kind::Choice && !d.editable {
-                assert!(d.choices.iter().any(|c| c.value.same(&d.default)), "{}: default isn't a choice", d.key);
+                assert!(
+                    d.choices.iter().any(|c| c.value.same(&d.default)),
+                    "{}: default isn't a choice",
+                    d.key
+                );
             }
         }
     }

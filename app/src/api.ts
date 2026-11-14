@@ -147,6 +147,11 @@ export interface Theme {
   scheme?: "dark" | "light" | null;
 }
 
+export interface AppUpdate {
+  version: string;
+  notes: string;
+}
+
 export interface Backend {
   library(): Promise<LibraryGame[]>;
   game(key: string): Promise<GameView>;
@@ -163,6 +168,10 @@ export interface Backend {
   deletePreset(id: string): Promise<AppView>;
   theme(): Promise<Theme>;
   onTheme(cb: (t: Theme) => void): void;
+  /** A newer GSet from the latest release, if there is one. */
+  checkUpdate(): Promise<AppUpdate | null>;
+  /** Downloads and installs the update found by checkUpdate, then restarts GSet. */
+  installUpdate(progress: (fraction: number | null) => void): Promise<void>;
 }
 
 export const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -170,6 +179,8 @@ export const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in
 async function tauriBackend(): Promise<Backend> {
   const { invoke } = await import("@tauri-apps/api/core");
   const { listen } = await import("@tauri-apps/api/event");
+  const updater = await import("@tauri-apps/plugin-updater");
+  let found: Awaited<ReturnType<typeof updater.check>> = null;
   return {
     library: () => invoke("library"),
     game: (key) => invoke("game", { key }),
@@ -187,6 +198,25 @@ async function tauriBackend(): Promise<Backend> {
     theme: () => invoke("theme"),
     onTheme: (cb) => {
       void listen<Theme>("theme-changed", (e) => cb(e.payload));
+    },
+    async checkUpdate() {
+      found = await updater.check();
+      return found ? { version: found.version, notes: found.body ?? "" } : null;
+    },
+    async installUpdate(progress) {
+      if (!found) throw new Error("There's no update to install.");
+      let total = 0;
+      let done = 0;
+      await found.downloadAndInstall((e) => {
+        if (e.event === "Started") total = e.data.contentLength ?? 0;
+        if (e.event === "Progress") {
+          done += e.data.chunkLength;
+          progress(total ? done / total : null);
+        }
+        if (e.event === "Finished") progress(1);
+      });
+      const { relaunch } = await import("@tauri-apps/plugin-process");
+      await relaunch();
     },
   };
 }

@@ -3,7 +3,7 @@
 
 import { toast } from "sonner";
 import { create } from "zustand";
-import { api, type AppView, type GameView, type LibraryGame, type Theme, type Value } from "./api";
+import { api, type AppUpdate, type AppView, type GameView, type LibraryGame, type Theme, type Value } from "./api";
 import { label, presetLabel, type Sort } from "./logic";
 
 const stored = <T,>(key: string, fallback: T): T => {
@@ -39,6 +39,9 @@ interface State {
   theme: Theme;
   dialog: null | "settings" | "review" | "preset";
   editPreset: string | null;
+  appUpdate: AppUpdate | null;
+  /** null: not updating; a number: how much is downloaded */
+  updating: number | null;
 
   init(): Promise<void>;
   select(key: string): Promise<void>;
@@ -61,6 +64,8 @@ interface State {
   setAppOption(key: string, v: Value): Promise<void>;
   savePreset(id: string | null, name: string, screen: string | null): Promise<void>;
   deletePreset(id: string): Promise<void>;
+  checkUpdate(): Promise<void>;
+  installUpdate(): Promise<void>;
 }
 
 const fail = (e: unknown) => toast.error(String(e));
@@ -90,6 +95,8 @@ export const useStore = create<State>((set, get) => {
     theme: {},
     dialog: null,
     editPreset: null,
+    appUpdate: null,
+    updating: null,
 
     async init() {
       try {
@@ -100,6 +107,7 @@ export const useStore = create<State>((set, get) => {
         const first = library.find((g) => g.key === get().selected) ?? [...library].sort((a, b) => (b.last_played ?? 0) - (a.last_played ?? 0))[0];
         if (first) await get().select(first.key);
         set({ ready: true });
+        if (app.check_updates) void get().checkUpdate();
       } catch (e) {
         set({ error: String(e), ready: true });
       }
@@ -260,6 +268,23 @@ export const useStore = create<State>((set, get) => {
         }
       } catch (e) {
         fail(e);
+      }
+    },
+    async checkUpdate() {
+      try {
+        set({ appUpdate: await (await api()).checkUpdate() });
+      } catch (e) {
+        // offline, or GitHub unreachable: say nothing, try again next time
+        console.warn("update check:", e);
+      }
+    },
+    async installUpdate() {
+      try {
+        set({ updating: 0 });
+        await (await api()).installUpdate((f) => set({ updating: f ?? 0 }));
+      } catch (e) {
+        set({ updating: null });
+        fail(`The update didn’t install: ${e}`);
       }
     },
     async deletePreset(id) {

@@ -39,19 +39,30 @@ impl Kind {
         match self {
             Kind::Hero => &["library_hero.jpg", "library_hero.png"],
             Kind::Logo => &["logo.png"],
-            Kind::Capsule => &["library_capsule.jpg", "library_600x900.jpg", "library_capsule.png"],
+            Kind::Capsule => &[
+                "library_capsule.jpg",
+                "library_600x900.jpg",
+                "library_capsule.png",
+            ],
             Kind::Header => &["library_header.jpg", "header.jpg", "library_header.png"],
         }
     }
 }
 
-fn cache() -> &'static Mutex<HashMap<(u64, Kind), Option<PathBuf>>> {
-    static C: OnceLock<Mutex<HashMap<(u64, Kind), Option<PathBuf>>>> = OnceLock::new();
+/// Found files (or None: not there), by game and kind.
+type Found = Mutex<HashMap<(u64, Kind), Option<PathBuf>>>;
+
+fn cache() -> &'static Found {
+    static C: OnceLock<Found> = OnceLock::new();
     C.get_or_init(Default::default)
 }
 
 pub fn find(steam_root: &Path, id: u64, kind: Kind) -> Option<PathBuf> {
-    if let Some(hit) = cache().lock().ok().and_then(|c| c.get(&(id, kind)).cloned()) {
+    if let Some(hit) = cache()
+        .lock()
+        .ok()
+        .and_then(|c| c.get(&(id, kind)).cloned())
+    {
         return hit;
     }
     let found = look(steam_root, id, kind);
@@ -97,7 +108,11 @@ fn find_in(dir: &Path, name: &str, depth: u32) -> Option<PathBuf> {
     if depth == 0 {
         return None;
     }
-    std::fs::read_dir(dir).ok()?.flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_dir())).find_map(|e| find_in(&e.path(), name, depth - 1))
+    std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+        .find_map(|e| find_in(&e.path(), name, depth - 1))
 }
 
 pub fn url(id: u64, kind: &str) -> String {
@@ -107,13 +122,24 @@ pub fn url(id: u64, kind: &str) -> String {
 pub fn handle(steam_root: &Path, req: &Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> {
     let parts: Vec<&str> = req.uri().path().trim_matches('/').split('/').collect();
     let file = match parts.as_slice() {
-        [id, kind] => id.parse::<u64>().ok().zip(Kind::parse(kind)).and_then(|(id, k)| find(steam_root, id, k)),
+        [id, kind] => id
+            .parse::<u64>()
+            .ok()
+            .zip(Kind::parse(kind))
+            .and_then(|(id, k)| find(steam_root, id, k)),
         _ => None,
     };
     let Some(bytes) = file.as_ref().and_then(|f| std::fs::read(f).ok()) else {
-        return Response::builder().status(StatusCode::NOT_FOUND).body(Cow::Borrowed(&[][..])).expect("a response");
+        return Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(Cow::Borrowed(&[][..]))
+            .expect("a response");
     };
-    let mime = match file.as_ref().and_then(|f| f.extension()).and_then(|e| e.to_str()) {
+    let mime = match file
+        .as_ref()
+        .and_then(|f| f.extension())
+        .and_then(|e| e.to_str())
+    {
         Some("png") => "image/png",
         Some("webp") => "image/webp",
         _ => "image/jpeg",

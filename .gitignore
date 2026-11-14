@@ -7,3 +7,4 @@ dist/
 /design-prototype/
 /app/public/dev-fixture/
 /app/src-tauri/gen/
+/app/src-tauri/binaries/

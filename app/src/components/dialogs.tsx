@@ -31,6 +31,9 @@ export function SettingsDialog() {
   const app = useStore((s) => s.app);
   const set = useStore((s) => s.setAppOption);
   const open = useStore((s) => s.open);
+  const update = useStore((s) => s.appUpdate);
+  const updating = useStore((s) => s.updating);
+  const install = useStore((s) => s.installUpdate);
   if (!app) return null;
   const line = `${app.launcher ?? "gset"} %command%`;
   return (
@@ -40,15 +43,31 @@ export function SettingsDialog() {
         <div className="srow">
           <div className="lab">
             <b>Version {app.version}</b>
-            <small>Updates arrive here once GSet is published.</small>
+            <small>
+              {update
+                ? `Version ${update.version} is available.`
+                : app.check_updates
+                  ? "Up to date."
+                  : "Checking for updates is off."}
+            </small>
+            {update?.notes && (
+              <small className="selectable" style={{ whiteSpace: "pre-line", marginTop: 6 }}>
+                {update.notes}
+              </small>
+            )}
           </div>
+          {update && (
+            <button type="button" className="btn primary" disabled={updating !== null} onClick={() => void install()}>
+              {updating === null ? "Update and restart" : updating >= 1 ? "Restarting…" : `Downloading ${Math.round(updating * 100)}%`}
+            </button>
+          )}
         </div>
         <div className="srow">
           <div className="lab">
             <b>Check for updates</b>
             <small>When this window opens. Never while a game starts.</small>
           </div>
-          <Switch on={app.check_updates} label="Check for updates" onChange={(b) => void set("check_updates", b)} />
+          <Switch on={app.check_updates} label="Check for updates" onChange={(b) => (void set("check_updates", b), b && void useStore.getState().checkUpdate())} />
         </div>
       </section>
       <section>
@@ -78,7 +97,7 @@ export function SettingsDialog() {
         <div className="srow">
           <div className="lab">
             <b>{app.profiles} profiles</b>
-            <small>From github.com/elpideus/gset-profiles, once it’s published.</small>
+            <small>From github.com/elpideus/gset-profiles.</small>
           </div>
         </div>
       </section>

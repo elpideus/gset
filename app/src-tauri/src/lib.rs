@@ -1,6 +1,7 @@
 //! GSet's settings window: a Tauri shell around gset-core.
 
 mod art;
+mod launcher;
 mod theme;
 pub mod views;
 
@@ -9,6 +10,8 @@ use tauri::Manager;
 pub fn start() {
     let steam_root = gset_core::steam::steam_root(&gset_core::Paths::new().home);
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .register_uri_scheme_protocol("art", move |_ctx, req| art::handle(&steam_root, &req))
         .invoke_handler(tauri::generate_handler![
             views::library,
@@ -27,9 +30,16 @@ pub fn start() {
             views::theme,
         ])
         .setup(|app| {
+            if let Some(done) = launcher::ensure(&gset_core::Paths::new()) {
+                eprintln!("gset-app: {done}");
+            }
             theme::watch(app.handle().clone());
+            // the page shows the window once it has drawn (no white flash); this is the fallback
             if let Some(w) = app.get_webview_window("main") {
-                let _ = w.show();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(3));
+                    let _ = w.show();
+                });
             }
             Ok(())
         })

@@ -44,7 +44,14 @@ impl Preset {
 pub fn ratio_name(w: u32, h: u32) -> String {
     let r = f64::from(w) / f64::from(h);
     // "21:9" is a marketing name: 2560×1080 (2.37), 3440×1440 (2.39) and 3840×1600 (2.4) all go by it
-    for (name, x, tol) in [("32:9", 32.0 / 9.0, 0.05), ("21:9", 2.37, 0.06), ("16:9", 16.0 / 9.0, 0.03), ("16:10", 1.6, 0.03), ("4:3", 4.0 / 3.0, 0.03), ("5:4", 1.25, 0.03)] {
+    for (name, x, tol) in [
+        ("32:9", 32.0 / 9.0, 0.05),
+        ("21:9", 2.37, 0.06),
+        ("16:9", 16.0 / 9.0, 0.03),
+        ("16:10", 1.6, 0.03),
+        ("4:3", 4.0 / 3.0, 0.03),
+        ("5:4", 1.25, 0.03),
+    ] {
         if (r - x).abs() < tol {
             return name.into();
         }
@@ -77,9 +84,15 @@ impl AppConfig {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => format!("{APP_HEADER}\n[app]\n"),
             Err(e) => return Err(format!("{}: {e}", path.display())),
         };
-        let doc: DocumentMut = text.parse().map_err(|e| format!("{}: {e}", path.display()))?;
+        let doc: DocumentMut = text
+            .parse()
+            .map_err(|e| format!("{}: {e}", path.display()))?;
         let app = doc.get("app").and_then(Item::as_table_like);
-        let flag = |k: &str, d: bool| app.and_then(|t| t.get(k)).and_then(Item::as_bool).unwrap_or(d);
+        let flag = |k: &str, d: bool| {
+            app.and_then(|t| t.get(k))
+                .and_then(Item::as_bool)
+                .unwrap_or(d)
+        };
         let new_games = match app.and_then(|t| t.get("new_games")).and_then(Item::as_str) {
             Some("defaults") => NewGames::Defaults,
             _ => NewGames::Suggested,
@@ -87,11 +100,21 @@ impl AppConfig {
         let mut presets = Vec::new();
         if let Some(t) = doc.get("presets").and_then(Item::as_table_like) {
             for (id, item) in t.iter() {
-                let Some(p) = item.as_table_like() else { continue };
+                let Some(p) = item.as_table_like() else {
+                    continue;
+                };
                 presets.push(Preset {
                     id: id.to_string(),
-                    name: p.get("name").and_then(Item::as_str).unwrap_or(id).to_string(),
-                    screen: p.get("screen").and_then(Item::as_str).filter(|s| !s.is_empty()).map(String::from),
+                    name: p
+                        .get("name")
+                        .and_then(Item::as_str)
+                        .unwrap_or(id)
+                        .to_string(),
+                    screen: p
+                        .get("screen")
+                        .and_then(Item::as_str)
+                        .filter(|s| !s.is_empty())
+                        .map(String::from),
                     values: values_of(p.get("settings")),
                 });
             }
@@ -116,7 +139,13 @@ impl AppConfig {
         match key {
             "check_updates" => self.check_updates = v.as_bool(),
             "auto_profile_updates" => self.auto_profile_updates = v.as_bool(),
-            "new_games" => self.new_games = if v.as_str() == "defaults" { NewGames::Defaults } else { NewGames::Suggested },
+            "new_games" => {
+                self.new_games = if v.as_str() == "defaults" {
+                    NewGames::Defaults
+                } else {
+                    NewGames::Suggested
+                }
+            }
             _ => {}
         }
     }
@@ -149,7 +178,11 @@ impl AppConfig {
     }
 
     pub fn remove_preset(&mut self, id: &str) {
-        if let Some(t) = self.doc.get_mut("presets").and_then(Item::as_table_like_mut) {
+        if let Some(t) = self
+            .doc
+            .get_mut("presets")
+            .and_then(Item::as_table_like_mut)
+        {
             t.remove(id);
         }
         self.presets.retain(|p| p.id != id);
@@ -206,7 +239,11 @@ impl GameConfig {
     pub fn new(paths: &Paths, key: &str, info: GameInfo) -> GameConfig {
         let header = format!(
             "# GSet settings for {}.\n# Edit them in GSet, or here: GSet keeps your comments when it saves.\n\n[game]\n",
-            if info.name.is_empty() { key } else { &info.name }
+            if info.name.is_empty() {
+                key
+            } else {
+                &info.name
+            }
         );
         let mut g = GameConfig {
             key: key.into(),
@@ -228,12 +265,25 @@ impl GameConfig {
     }
 
     pub fn parse(path: &Path, text: &str) -> Result<GameConfig, String> {
-        let doc: DocumentMut = text.parse().map_err(|e| format!("{}: {e}", path.display()))?;
-        let key = path.file_stem().and_then(|s| s.to_str()).unwrap_or("game").to_string();
+        let doc: DocumentMut = text
+            .parse()
+            .map_err(|e| format!("{}: {e}", path.display()))?;
+        let key = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("game")
+            .to_string();
         let g = doc.get("game").and_then(Item::as_table_like);
-        let s = |k: &str| g.and_then(|t| t.get(k)).and_then(Item::as_str).filter(|s| !s.is_empty()).map(String::from);
+        let s = |k: &str| {
+            g.and_then(|t| t.get(k))
+                .and_then(Item::as_str)
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+        };
         let steam = g.and_then(|t| t.get("steam")).and_then(|i| {
-            i.as_integer().map(|n| n as u64).or_else(|| i.as_str().and_then(|s| s.trim().parse().ok()))
+            i.as_integer()
+                .map(|n| n as u64)
+                .or_else(|| i.as_str().and_then(|s| s.trim().parse().ok()))
         });
         let info = GameInfo {
             name: s("name").unwrap_or_else(|| key.clone()),
@@ -250,7 +300,11 @@ impl GameConfig {
                 presets.insert(id.to_string(), values_of(Some(item)));
             }
         }
-        let pinned = doc.get("pinned").and_then(Item::as_str).filter(|s| !s.is_empty()).map(String::from);
+        let pinned = doc
+            .get("pinned")
+            .and_then(Item::as_str)
+            .filter(|s| !s.is_empty())
+            .map(String::from);
         Ok(GameConfig {
             key,
             path: path.to_path_buf(),
@@ -331,7 +385,12 @@ impl GameConfig {
 
     /// Adds a comment line above a setting (used by the import to say where a value came from).
     pub fn note(&mut self, key: &str, comment: &str) {
-        if let Some(mut k) = self.doc.get_mut("settings").and_then(Item::as_table_mut).and_then(|t| t.key_mut(key)) {
+        if let Some(mut k) = self
+            .doc
+            .get_mut("settings")
+            .and_then(Item::as_table_mut)
+            .and_then(|t| t.key_mut(key))
+        {
             k.leaf_decor_mut().set_prefix(format!("# {comment}\n"));
         }
     }
@@ -349,8 +408,14 @@ impl GameConfig {
 pub fn all_games(paths: &Paths) -> (Vec<GameConfig>, Vec<String>) {
     let mut games = Vec::new();
     let mut problems = Vec::new();
-    let Ok(entries) = std::fs::read_dir(paths.games()) else { return (games, problems) };
-    let mut files: Vec<_> = entries.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "toml")).collect();
+    let Ok(entries) = std::fs::read_dir(paths.games()) else {
+        return (games, problems);
+    };
+    let mut files: Vec<_> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "toml"))
+        .collect();
     files.sort();
     for f in files {
         match GameConfig::load(&f) {
@@ -367,7 +432,11 @@ pub fn game_for_steam(paths: &Paths, id: u64) -> (Option<GameConfig>, Option<Str
     let mut found = games.into_iter().filter(|g| g.info.steam == Some(id));
     let first = found.next();
     let warning = found.next().map(|other| {
-        format!("{} also has Steam id {id}; using {}", other.path.display(), first.as_ref().map(|g| g.key.as_str()).unwrap_or(""))
+        format!(
+            "{} also has Steam id {id}; using {}",
+            other.path.display(),
+            first.as_ref().map(|g| g.key.as_str()).unwrap_or("")
+        )
     });
     (first, warning)
 }
@@ -448,24 +517,34 @@ pub fn write_with_backup(path: &Path, text: &str) -> Result<(), String> {
         let backups = dir.join(".backup");
         let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("file");
         if std::fs::create_dir_all(&backups).is_ok() {
-            let _ = std::fs::write(backups.join(format!("{stem}-{}.toml", crate::clock::now_stamp())), old);
+            let _ = std::fs::write(
+                backups.join(format!("{stem}-{}.toml", crate::clock::now_stamp())),
+                old,
+            );
             prune_backups(&backups, stem);
         }
     }
     // check it reads back before replacing anything
-    text.parse::<DocumentMut>().map_err(|e| format!("not saved, the new file wouldn't read back: {e}"))?;
+    text.parse::<DocumentMut>()
+        .map_err(|e| format!("not saved, the new file wouldn't read back: {e}"))?;
     let tmp = path.with_extension("toml.tmp");
     std::fs::write(&tmp, text).map_err(|e| format!("{}: {e}", tmp.display()))?;
     std::fs::rename(&tmp, path).map_err(|e| format!("{}: {e}", path.display()))
 }
 
 fn prune_backups(dir: &Path, stem: &str) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
     let prefix = format!("{stem}-");
     let mut mine: Vec<PathBuf> = entries
         .flatten()
         .map(|e| e.path())
-        .filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with(&prefix) && n.ends_with(".toml")))
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with(&prefix) && n.ends_with(".toml"))
+        })
         .collect();
     mine.sort();
     while mine.len() > KEEP_BACKUPS {
@@ -478,7 +557,12 @@ mod tests {
     use super::*;
 
     fn paths(dir: &Path) -> Paths {
-        Paths { config: dir.join("config"), data: dir.join("data"), state: dir.join("state"), home: dir.to_path_buf() }
+        Paths {
+            config: dir.join("config"),
+            data: dir.join("data"),
+            state: dir.join("state"),
+            home: dir.to_path_buf(),
+        }
     }
 
     #[test]
@@ -497,11 +581,19 @@ mod tests {
         g.set_preset("work", "render_scale", Some(Value::Int(100)));
         g.save().unwrap();
         let saved = std::fs::read_to_string(&file).unwrap();
-        assert!(saved.contains("# my notes") && saved.contains("# keep me"), "{saved}");
+        assert!(
+            saved.contains("# my notes") && saved.contains("# keep me"),
+            "{saved}"
+        );
         assert!(saved.contains("render_scale = 67") && !saved.contains("gamescope"));
         let again = GameConfig::load(&file).unwrap();
         assert_eq!(again.presets["work"]["render_scale"], Value::Int(100));
-        assert_eq!(std::fs::read_dir(p.games().join(".backup")).unwrap().count(), 1);
+        assert_eq!(
+            std::fs::read_dir(p.games().join(".backup"))
+                .unwrap()
+                .count(),
+            1
+        );
         let (found, warning) = game_for_steam(&p, 4508340);
         assert_eq!(found.unwrap().key, "nte");
         assert!(warning.is_none());
@@ -512,7 +604,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let p = paths(dir.path());
         let mut app = AppConfig::load(&p).unwrap();
-        assert!(!app.auto_profile_updates, "profile updates are manual by default");
+        assert!(
+            !app.auto_profile_updates,
+            "profile updates are manual by default"
+        );
         app.put_preset(Preset {
             id: "work".into(),
             name: "Work".into(),
@@ -522,7 +617,10 @@ mod tests {
         app.set_default("mangohud", Some(Value::Bool(true)));
         app.save().unwrap();
         let again = AppConfig::load(&p).unwrap();
-        assert_eq!(again.preset("work").unwrap().ratio().as_deref(), Some("16:9"));
+        assert_eq!(
+            again.preset("work").unwrap().ratio().as_deref(),
+            Some("16:9")
+        );
         assert_eq!(again.defaults["mangohud"], Value::Bool(true));
         assert_eq!(ratio_name(3440, 1440), "21:9");
     }

@@ -35,7 +35,10 @@ pub struct Resolved {
 
 impl Resolved {
     pub fn get(&self, key: &str) -> Value {
-        self.values.get(key).cloned().unwrap_or(Value::Str(String::new()))
+        self.values
+            .get(key)
+            .cloned()
+            .unwrap_or(Value::Str(String::new()))
     }
     pub fn on(&self, key: &str) -> bool {
         self.values.get(key).is_some_and(Value::as_bool)
@@ -52,7 +55,12 @@ impl Resolved {
     }
 }
 
-pub fn resolve(schema: &Schema, app: &AppConfig, game: &GameConfig, preset: Option<&str>) -> Resolved {
+pub fn resolve(
+    schema: &Schema,
+    app: &AppConfig,
+    game: &GameConfig,
+    preset: Option<&str>,
+) -> Resolved {
     let mut values = BTreeMap::new();
     let mut source = BTreeMap::new();
     let mut put = |m: &BTreeMap<String, Value>, s: Source| {
@@ -74,8 +82,15 @@ pub fn resolve(schema: &Schema, app: &AppConfig, game: &GameConfig, preset: Opti
         }
         used = Some(id.to_string());
     }
-    values.insert("engine".into(), Value::str(game.info.engine.clone().unwrap_or_default()));
-    Resolved { values, source, preset: used }
+    values.insert(
+        "engine".into(),
+        Value::str(game.info.engine.clone().unwrap_or_default()),
+    );
+    Resolved {
+        values,
+        source,
+        preset: used,
+    }
 }
 
 /// Why a preset is in use.
@@ -94,7 +109,12 @@ pub enum PresetWhy {
 
 /// The preset a launch uses: the one asked for, else the game's pinned one, else the first whose
 /// screen rule matches a screen that's on.
-pub fn pick_preset(app: &AppConfig, game: &GameConfig, screens: &[Screen], asked: Option<&str>) -> (Option<String>, PresetWhy) {
+pub fn pick_preset(
+    app: &AppConfig,
+    game: &GameConfig,
+    screens: &[Screen],
+    asked: Option<&str>,
+) -> (Option<String>, PresetWhy) {
     if let Some(a) = asked {
         if a == "none" || a.is_empty() {
             return (None, PresetWhy::Asked);
@@ -121,13 +141,22 @@ pub fn pick_preset(app: &AppConfig, game: &GameConfig, screens: &[Screen], asked
 /// The values a game starts with the first time GSet meets it.
 pub fn start_values(profile: Option<&Profile>, new_games: NewGames) -> BTreeMap<String, Value> {
     match (profile, new_games) {
-        (Some(p), NewGames::Suggested) => p.suggest.iter().map(|(k, s)| (k.clone(), s.value.clone())).collect(),
+        (Some(p), NewGames::Suggested) => p
+            .suggest
+            .iter()
+            .map(|(k, s)| (k.clone(), s.value.clone()))
+            .collect(),
         _ => BTreeMap::new(),
     }
 }
 
 /// Suggestions that differ from the game's value and that you haven't hidden.
-pub fn open_suggestions(schema: &Schema, profile: Option<&Profile>, game: &GameConfig, base: &Resolved) -> Vec<String> {
+pub fn open_suggestions(
+    schema: &Schema,
+    profile: Option<&Profile>,
+    game: &GameConfig,
+    base: &Resolved,
+) -> Vec<String> {
     let Some(p) = profile else { return Vec::new() };
     p.suggest
         .iter()
@@ -148,7 +177,12 @@ mod tests {
 
     fn setup() -> (tempfile::TempDir, Paths) {
         let d = tempfile::tempdir().unwrap();
-        let p = Paths { config: d.path().join("c"), data: d.path().join("d"), state: d.path().join("s"), home: d.path().into() };
+        let p = Paths {
+            config: d.path().join("c"),
+            data: d.path().join("d"),
+            state: d.path().join("s"),
+            home: d.path().into(),
+        };
         (d, p)
     }
 
@@ -158,8 +192,21 @@ mod tests {
         let mut app = AppConfig::load(&paths).unwrap();
         app.set_default("mangohud", Some(true.into()));
         app.set_default("frame_cap", Some(Value::Int(120)));
-        app.put_preset(Preset { id: "work".into(), name: "Work".into(), screen: Some("1920x1080".into()), values: [("frame_cap".into(), Value::Int(60))].into() });
-        let mut game = GameConfig::new(&paths, "nte", GameInfo { name: "NTE".into(), engine: Some("unreal".into()), ..Default::default() });
+        app.put_preset(Preset {
+            id: "work".into(),
+            name: "Work".into(),
+            screen: Some("1920x1080".into()),
+            values: [("frame_cap".into(), Value::Int(60))].into(),
+        });
+        let mut game = GameConfig::new(
+            &paths,
+            "nte",
+            GameInfo {
+                name: "NTE".into(),
+                engine: Some("unreal".into()),
+                ..Default::default()
+            },
+        );
         game.set("render_scale", Some(Value::Int(75)));
         game.set_preset("work", "render_scale", Some(Value::Int(100)));
         let schema = Schema::for_game(None);
@@ -171,21 +218,49 @@ mod tests {
         assert_eq!(base.get("frame_cap"), Value::Int(120));
         assert_eq!(base.get("engine"), Value::str("unreal"));
 
-        let screens = vec![Screen { name: "DP-2".into(), description: String::new(), width: 1920, height: 1080, refresh: 60 }];
+        let screens = vec![Screen {
+            name: "DP-2".into(),
+            description: String::new(),
+            width: 1920,
+            height: 1080,
+            refresh: 60,
+        }];
         let (p, why) = pick_preset(&app, &game, &screens, None);
         assert_eq!(p.as_deref(), Some("work"));
-        assert_eq!(why, PresetWhy::Screen { mode: "1920x1080".into() });
+        assert_eq!(
+            why,
+            PresetWhy::Screen {
+                mode: "1920x1080".into()
+            }
+        );
         let work = resolve(&schema, &app, &game, p.as_deref());
         assert_eq!(work.get("frame_cap"), Value::Int(60));
         assert_eq!(work.get("render_scale"), Value::Int(100));
-        assert_eq!(work.source["render_scale"], Source::GamePreset("work".into()));
+        assert_eq!(
+            work.source["render_scale"],
+            Source::GamePreset("work".into())
+        );
 
-        let ultrawide = vec![Screen { name: "DP-2".into(), description: String::new(), width: 3440, height: 1440, refresh: 165 }];
+        let ultrawide = vec![Screen {
+            name: "DP-2".into(),
+            description: String::new(),
+            width: 3440,
+            height: 1440,
+            refresh: 165,
+        }];
         assert_eq!(pick_preset(&app, &game, &ultrawide, None).0, None);
-        assert_eq!(pick_preset(&app, &game, &ultrawide, Some("work")).0.as_deref(), Some("work"));
+        assert_eq!(
+            pick_preset(&app, &game, &ultrawide, Some("work"))
+                .0
+                .as_deref(),
+            Some("work")
+        );
         assert_eq!(pick_preset(&app, &game, &screens, Some("none")).0, None);
         game.pin(Some("work"));
-        assert_eq!(pick_preset(&app, &game, &ultrawide, None), (Some("work".into()), PresetWhy::Pinned));
+        assert_eq!(
+            pick_preset(&app, &game, &ultrawide, None),
+            (Some("work".into()), PresetWhy::Pinned)
+        );
     }
 
     #[test]
@@ -203,8 +278,15 @@ mod tests {
         }
         game.set("render_scale", Some(Value::Int(75)));
         let base = resolve(&schema, &app, &game, None);
-        assert_eq!(base.get("render_scale"), Value::Int(75), "your value, not the suggestion");
-        assert_eq!(open_suggestions(&schema, Some(&profile), &game, &base), vec!["render_scale".to_string()]);
+        assert_eq!(
+            base.get("render_scale"),
+            Value::Int(75),
+            "your value, not the suggestion"
+        );
+        assert_eq!(
+            open_suggestions(&schema, Some(&profile), &game, &base),
+            vec!["render_scale".to_string()]
+        );
         game.dismiss("render_scale", Some(Value::Int(67)));
         assert!(open_suggestions(&schema, Some(&profile), &game, &base).is_empty());
         assert!(start_values(Some(&profile), crate::config::NewGames::Defaults).is_empty());
