@@ -5,7 +5,7 @@ import clsx from "clsx";
 import { AlertTriangle, Check, Copy, Pin, PinOff, Play, Plus, RotateCcw, X } from "lucide-react";
 import { motion } from "motion/react";
 import type { GameView, SettingDef, Value } from "../api";
-import { holds, label, presetLabel, quote, same, sourceText } from "../logic";
+import { fmtSize, holds, label, presetLabel, quote, same, sourceText } from "../logic";
 import { useStore } from "../store";
 import { Control, Segmented } from "./controls";
 import { Ratio } from "./Mark";
@@ -159,6 +159,38 @@ function Tabs({ g }: { g: GameView }) {
   );
 }
 
+/** On a preset's tab that the next launch won't use: why not, and a way to use it. */
+function NotUsed({ g, view }: { g: GameView; view: string }) {
+  const pin = useStore((s) => s.pin);
+  const inUse = g.in_use.preset ?? "base";
+  const p = g.presets.find((x) => x.id === view);
+  if (!p || inUse === view) return null;
+  const short = g.info.name.split(":")[0];
+  const name = presetLabel(g, view);
+  const now = g.screens.map((sc) => `${sc.width}x${sc.height}`);
+  let why: string;
+  if (g.pinned && g.pinned !== view) why = `${presetLabel(g, g.pinned)} is pinned for ${short}.`;
+  else if (!p.screen) why = `${name} has no screen, so it’s used only when pinned.`;
+  else if (now.includes(p.screen)) why = `${presetLabel(g, inUse)} matches this screen first.`;
+  else why = `${name} is for a ${fmtSize(p.screen)} screen${now.length ? `, and the screen is ${now.map(fmtSize).join(" and ")} now` : ""}.`;
+  return (
+    <div className="notused" role="status">
+      <AlertTriangle size={14} />
+      <span>
+        <b>{short}’s next launch won’t use {name}.</b> {why}
+      </span>
+      <button
+        type="button"
+        className="btn primary"
+        onClick={() => void pin(view).then(() => useStore.getState().game?.pinned === view && toast(`${short} now starts with ${name}, whatever the screen. Unpin it to go back.`))}
+      >
+        <Pin size={14} />
+        Use it for {short}
+      </button>
+    </div>
+  );
+}
+
 function Launch({ g }: { g: GameView }) {
   const L = g.launch;
   const steamNow = L.steam_now?.trim();
@@ -199,7 +231,7 @@ function CommandBar({ g }: { g: GameView }) {
   const view = useStore((s) => s.view);
   const V = g.views[view] ?? g.views.base;
   const inUse = (g.in_use.preset ?? "base") === view;
-  const caption = view === "base" ? (g.in_use.preset ? "Base, without a preset" : "Base") : `${presetLabel(g, view)}${inUse ? ", in use" : ""}`;
+  const caption = view === "base" ? (g.in_use.preset ? "Base, without a preset" : "Base") : `${presetLabel(g, view)}${inUse ? ", in use" : ", not used now"}`;
   const env = V.command.env;
   const shown = V.command.argv;
   return (
@@ -316,6 +348,7 @@ export function GamePage({ entering }: { entering: boolean }) {
                 </div>
               )}
               <Tabs g={g} />
+              {view !== "base" && <NotUsed g={g} view={view} />}
               {view !== "base" && (
                 <div className="scope">
                   Changes here apply to

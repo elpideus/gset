@@ -450,7 +450,15 @@ pub fn build(
         );
     }
     plan.argv = argv;
-    plan.env = env;
+    // one entry per variable: a later one (yours, say) replaces an earlier one where it stood
+    let mut merged: Vec<(String, String)> = Vec::new();
+    for (k, v) in env {
+        match merged.iter_mut().find(|(m, _)| *m == k) {
+            Some(slot) => slot.1 = v,
+            None => merged.push((k, v)),
+        }
+    }
+    plan.env = merged;
     plan
 }
 
@@ -679,7 +687,11 @@ mod tests {
                 "run_before",
                 Some("PULSE_LATENCY_MSEC=60 gamemoderun".into()),
             );
-            game.set("env", Some("A=1 'B=two words'".into()));
+            game.set("dlss_preset", Some("K".into()));
+            game.set(
+                "env",
+                Some("A=1 'B=two words' DXVK_NVAPI_DRS_NGX_DLSS_SR_OVERRIDE=off".into()),
+            );
             let schema = Schema::for_game(None);
             let r = crate::resolve::resolve(&schema, &app, &game, None);
             let incoming: Vec<String> = [
@@ -697,6 +709,13 @@ mod tests {
         assert_eq!(p.argv.join(" "), "gamemoderun umu-run Launcher.exe");
         assert_eq!(p.env_value("PULSE_LATENCY_MSEC"), Some("60"));
         assert_eq!(p.env_value("B"), Some("two words"));
+        let dlss: Vec<_> = p
+            .env
+            .iter()
+            .filter(|(k, _)| k == "DXVK_NVAPI_DRS_NGX_DLSS_SR_OVERRIDE")
+            .collect();
+        assert_eq!(dlss.len(), 1, "one entry per variable: {:?}", p.env);
+        assert_eq!(dlss[0].1, "off", "yours wins");
         assert_eq!(redact("-AUTH_PASSWORD=abc123"), "-AUTH_PASSWORD=…");
     }
 
