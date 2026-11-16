@@ -13,7 +13,7 @@ use gset_core::value::Value;
 use gset_core::{Paths, slug};
 use serde::Serialize;
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub struct Ctx {
     pub paths: Paths,
@@ -43,7 +43,7 @@ pub struct Art {
     logo: Option<String>,
 }
 
-fn art_for(steam_root: &std::path::Path, id: Option<u64>) -> Art {
+fn art_for(steam_root: &Path, id: Option<u64>) -> Art {
     let get = |k: &str| {
         id.and_then(|id| art::find(steam_root, id, Kind::parse(k)?).map(|_| art::url(id, k)))
     };
@@ -78,7 +78,7 @@ fn pretty_tool(t: &str) -> String {
     t.to_string()
 }
 
-fn modified(path: &std::path::Path) -> Option<u64> {
+fn modified(path: &Path) -> Option<u64> {
     std::fs::metadata(path)
         .ok()?
         .modified()
@@ -246,11 +246,14 @@ pub struct InUse {
 pub struct LaunchView {
     /// steam, shortcut or other (Heroic and the like)
     kind: &'static str,
-    /// the line to put in the launch options (or Heroic's wrapper)
+    /// where the line goes: launch_options, target (a shortcut's) or wrapper (Heroic's)
+    field: &'static str,
+    /// what to put there
     line: String,
-    /// what Steam's launch options say now (Steam games only)
-    steam_now: Option<String>,
-    uses_gset: Option<bool>,
+    /// what that field says now, when GSet can read it (Steam's files)
+    now: Option<String>,
+    /// whether it's right
+    ok: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -285,6 +288,73 @@ fn launch_kind(g: &GameConfig) -> &'static str {
         Some(id) if id > u64::from(u32::MAX >> 1) => "shortcut",
         Some(_) => "steam",
         None => "other",
+    }
+}
+
+fn starts_with_gset(line: &str) -> bool {
+    line.split_whitespace()
+        .next()
+        .is_some_and(|w| w == "gset" || w.ends_with("/gset"))
+}
+
+/// What Steam should have for the game, and whether it does. A game with a script of its own is a
+/// shortcut whose Target is that script: GSet needn't be in Steam at all. Any other game has gset
+/// in its launch options (a shortcut's too: never in its Target, where Steam doesn't fill in
+/// %command%).
+fn launch_view(
+    c: &Ctx,
+    g: &GameConfig,
+    state: &SteamState,
+    kind: &'static str,
+    launcher: &str,
+) -> LaunchView {
+    let shortcut = (kind == "shortcut")
+        .then(|| g.info.steam.and_then(|id| state.shortcuts.get(&id)))
+        .flatten();
+    let gset_line = format!("{launcher} %command%");
+    match (kind, &g.info.script) {
+        ("shortcut", Some(script)) => {
+            let script = c.paths.expand(script);
+            let now = shortcut.map(|s| s.target.clone());
+            let ok = now.as_ref().map(|t| {
+                std::fs::canonicalize(t).ok() == std::fs::canonicalize(&script).ok()
+                    || Path::new(t) == script
+            });
+            LaunchView {
+                kind,
+                field: "target",
+                line: script.display().to_string(),
+                now,
+                ok,
+            }
+        }
+        ("shortcut", None) => LaunchView {
+            kind,
+            field: "launch_options",
+            ok: shortcut.map(|s| starts_with_gset(&s.launch_options)),
+            now: shortcut.map(|s| s.launch_options.clone()),
+            line: gset_line,
+        },
+        ("steam", _) => {
+            let now = g
+                .info
+                .steam
+                .and_then(|id| state.launch_options.get(&id).cloned());
+            LaunchView {
+                kind,
+                field: "launch_options",
+                ok: Some(now.as_deref().is_some_and(starts_with_gset)),
+                now,
+                line: gset_line,
+            }
+        }
+        _ => LaunchView {
+            kind,
+            field: "wrapper",
+            line: format!("{launcher} --game={}", g.key),
+            now: None,
+            ok: None,
+        },
     }
 }
 
@@ -354,20 +424,7 @@ pub fn game_view(c: &Ctx, g: &GameConfig, state: &SteamState, screens: &[Screen]
     let launcher = launcher_path(&c.paths)
         .map(|p| p.display().to_string())
         .unwrap_or_else(|| "gset".into());
-    let steam_now = if kind == "steam" {
-        g.info
-            .steam
-            .and_then(|id| state.launch_options.get(&id).cloned())
-    } else {
-        None
-    };
-    let uses_gset = (kind == "steam").then(|| {
-        steam_now.as_deref().is_some_and(|o| {
-            o.split_whitespace()
-                .next()
-                .is_some_and(|w| w == "gset" || w.ends_with("/gset"))
-        })
-    });
+    let launch = launch_view(c, g, state, kind, &launcher);
     GameView {
         key: g.key.clone(),
         path: g.path.display().to_string(),
@@ -397,16 +454,7 @@ pub fn game_view(c: &Ctx, g: &GameConfig, state: &SteamState, screens: &[Screen]
         presets: presets(&c.app),
         in_use: InUse { preset, why },
         pinned: g.pinned.clone(),
-        launch: LaunchView {
-            kind,
-            line: if kind == "other" {
-                format!("{launcher} --game={}", g.key)
-            } else {
-                format!("{launcher} %command%")
-            },
-            steam_now,
-            uses_gset,
-        },
+        launch,
         screens: screens.to_vec(),
         last_played: g
             .info
@@ -714,7 +762,7 @@ pub fn theme() -> crate::theme::Theme {
 }
 
 /// For working on the window in a browser: everything the window shows, as JSON files.
-pub fn dump_fixture(dir: &std::path::Path) -> Result<(), String> {
+pub fn dump_fixture(dir: &Path) -> Result<(), String> {
     let c = ctx()?;
     std::fs::create_dir_all(dir.join("games")).map_err(|e| e.to_string())?;
     let write = |name: &str, v: &dyn erased::Json| {

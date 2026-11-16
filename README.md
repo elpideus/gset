@@ -30,6 +30,9 @@ Then, in Steam: a game → Properties → Launch Options:
 /home/you/.local/bin/gset %command%
 ```
 
+For a non-Steam game added to Steam, the line goes in the same Launch Options field, never in
+the shortcut's Target: Steam fills in `%command%` only in Launch Options.
+
 The AppImage puts the launcher in `~/.local/bin/gset` the first time it runs; the packages install
 it as `/usr/bin/gset`. GSet's window shows the exact line for each game, with a Copy button.
 GSet updates itself from its settings (signed updates from this repository's releases).

@@ -140,8 +140,12 @@ fn main() -> ExitCode {
 
 // ------------------------------------------------------------------------------------------ launch
 
-fn launch(paths: &Paths, o: &Opts, args: Vec<String>) -> ExitCode {
-    if args.is_empty() && o.game.is_none() {
+fn launch(paths: &Paths, o: &Opts, mut args: Vec<String>) -> ExitCode {
+    // "%command%" as text: the line is in a non-Steam shortcut's Target, where Steam doesn't fill it
+    // in (it does only in Launch Options). Dropped: a game with a script of its own still starts.
+    let pasted = args.iter().any(|a| a == "%command%");
+    args.retain(|a| a != "%command%");
+    if args.is_empty() && o.game.is_none() && !pasted {
         eprint!("{HELP}");
         return ExitCode::from(2);
     }
@@ -188,17 +192,7 @@ fn launch(paths: &Paths, o: &Opts, args: Vec<String>) -> ExitCode {
         warn(paths, o.dry_run, "GSet", w);
     }
     let game = found.game;
-    if args.is_empty() {
-        return start_as_is(
-            paths,
-            o,
-            &args,
-            &format!(
-                "Nothing to start for {}. Steam's launch option is: gset %command%",
-                game.info.name
-            ),
-        );
-    }
+    let wrong_field = "“gset %command%” is in the shortcut’s Target. Put the game’s program there, and “gset %command%” in its Launch Options.";
 
     // a game that a script of yours starts: the script runs instead, as before
     if let Some(script) = &game.info.script {
@@ -215,14 +209,35 @@ fn launch(paths: &Paths, o: &Opts, args: Vec<String>) -> ExitCode {
                 ),
             );
         }
-        let mut argv = vec![script.display().to_string()];
-        argv.extend(args.iter().cloned());
+        // Steam may start the script already (it's the shortcut's Target, with gset in the Launch
+        // Options): then the command runs as it came. Otherwise the script runs, in front of it.
+        let argv = if args.iter().any(|a| same_file(a, &script)) {
+            args.clone()
+        } else {
+            let mut v = vec![script.display().to_string()];
+            v.extend(args.iter().cloned());
+            v
+        };
         let p = Plan {
             argv,
             ..Default::default()
         };
         log_launch(paths, o.dry_run, &game, &found.how, "its own script", &p);
+        if pasted && !o.dry_run {
+            append_log(paths, &format!("  note: {wrong_field}"));
+        }
         return run(&p, o.dry_run);
+    }
+    if args.is_empty() {
+        let why = if pasted {
+            format!("Nothing to start for {}: {wrong_field}", game.info.name)
+        } else {
+            format!(
+                "Nothing to start for {}. Steam's launch option is: gset %command%",
+                game.info.name
+            )
+        };
+        return start_as_is(paths, o, &args, &why);
     }
 
     let profile = game.info.profile.as_deref().and_then(|id| profiles.get(id));
@@ -340,6 +355,15 @@ fn preset_name(app: &AppConfig, id: &str) -> String {
         },
         None => id.into(),
     }
+}
+
+/// Whether a word of the command is this file (a path to it, links followed).
+fn same_file(word: &str, file: &Path) -> bool {
+    word.contains('/')
+        && match (std::fs::canonicalize(word), std::fs::canonicalize(file)) {
+            (Ok(a), Ok(b)) => a == b,
+            _ => Path::new(word) == file,
+        }
 }
 
 /// Starts the command as it came, after telling why.

@@ -409,15 +409,93 @@ fn parse_map(chars: &mut std::iter::Peekable<std::str::Chars>) -> Vec<(String, V
     out
 }
 
-/// The most recently written localconfig.vdf (the signed-in user's).
-fn localconfig(steam_root: &Path) -> Option<Vdf> {
+/// The signed-in user's copy of a file in userdata/<user>/config/: the most recently written one.
+fn user_config(steam_root: &Path, name: &str) -> Option<PathBuf> {
     let users = std::fs::read_dir(steam_root.join("userdata")).ok()?;
-    let newest = users
+    users
         .flatten()
-        .map(|e| e.path().join("config/localconfig.vdf"))
+        .map(|e| e.path().join("config").join(name))
         .filter(|p| p.is_file())
-        .max_by_key(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok())?;
-    Some(Vdf::parse(&std::fs::read_to_string(newest).ok()?))
+        .max_by_key(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok())
+}
+
+fn localconfig(steam_root: &Path) -> Option<Vdf> {
+    let path = user_config(steam_root, "localconfig.vdf")?;
+    Some(Vdf::parse(&std::fs::read_to_string(path).ok()?))
+}
+
+/// A non-Steam game added to Steam: what its Properties say.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Shortcut {
+    /// Target, without the quotes Steam puts around it
+    pub target: String,
+    pub launch_options: String,
+}
+
+/// The shortcuts in shortcuts.vdf, by app id. The file is binary KeyValues: 0x00 opens a map,
+/// 0x01 is a string, 0x02 a 32-bit number, 0x08 closes a map; every key is a C string.
+pub fn parse_shortcuts(b: &[u8]) -> std::collections::HashMap<u64, Shortcut> {
+    fn cstr(b: &[u8], i: &mut usize) -> Option<String> {
+        let len = b.get(*i..)?.iter().position(|&c| c == 0)?;
+        let s = String::from_utf8_lossy(&b[*i..*i + len]).into_owned();
+        *i += len + 1;
+        Some(s)
+    }
+    let mut out = std::collections::HashMap::new();
+    let mut i = 0;
+    let mut depth = 0usize;
+    // the shortcut being read (maps at depth 2: shortcuts → "0", "1", …)
+    let mut id: Option<u64> = None;
+    let mut cur = Shortcut::default();
+    while let Some(&t) = b.get(i) {
+        i += 1;
+        match t {
+            0x00 => {
+                let Some(_) = cstr(b, &mut i) else { break };
+                depth += 1;
+                if depth == 2 {
+                    id = None;
+                    cur = Shortcut::default();
+                }
+            }
+            0x01 => {
+                let (Some(k), Some(v)) = (cstr(b, &mut i), cstr(b, &mut i)) else {
+                    break;
+                };
+                if depth == 2 {
+                    match k.to_ascii_lowercase().as_str() {
+                        "exe" => cur.target = v.trim().trim_matches('"').to_string(),
+                        "launchoptions" => cur.launch_options = v,
+                        _ => {}
+                    }
+                }
+            }
+            0x02 | 0x03 | 0x07 => {
+                let Some(k) = cstr(b, &mut i) else { break };
+                let n = if t == 0x07 { 8 } else { 4 };
+                let Some(bytes) = b.get(i..i + n) else { break };
+                if t == 0x02 && depth == 2 && k.eq_ignore_ascii_case("appid") {
+                    id = Some(u64::from(u32::from_le_bytes([
+                        bytes[0], bytes[1], bytes[2], bytes[3],
+                    ])));
+                }
+                i += n;
+            }
+            0x08 => {
+                if depth == 2
+                    && let Some(id) = id.take()
+                {
+                    out.insert(id, std::mem::take(&mut cur));
+                }
+                if depth == 0 {
+                    break;
+                }
+                depth -= 1;
+            }
+            _ => break,
+        }
+    }
+    out
 }
 
 /// What Steam knows about each of your games: when you last played it, its launch options.
@@ -427,6 +505,8 @@ pub struct SteamState {
     pub launch_options: std::collections::HashMap<u64, String>,
     /// the compatibility tool picked for a game in its Properties
     pub compat_tool: std::collections::HashMap<u64, String>,
+    /// non-Steam games, by their app id
+    pub shortcuts: std::collections::HashMap<u64, Shortcut>,
 }
 
 pub fn state(steam_root: &Path) -> SteamState {
@@ -448,6 +528,11 @@ pub fn state(steam_root: &Path) -> SteamState {
                 s.launch_options.insert(id, o.to_string());
             }
         }
+    }
+    if let Some(bytes) =
+        user_config(steam_root, "shortcuts.vdf").and_then(|p| std::fs::read(p).ok())
+    {
+        s.shortcuts = parse_shortcuts(&bytes);
     }
     if let Ok(text) = std::fs::read_to_string(steam_root.join("config/config.vdf"))
         && let Some(map) = Vdf::parse(&text).path(&[
@@ -482,6 +567,64 @@ pub fn run_id(id: u64) -> u64 {
 #[cfg(test)]
 mod vdf_tests {
     use super::*;
+
+    #[test]
+    fn reads_shortcuts() {
+        // the layout Steam writes: shortcuts → "0" { appid, AppName, Exe, …, tags { } }
+        let mut b = Vec::new();
+        let map = |b: &mut Vec<u8>, k: &str| {
+            b.push(0);
+            b.extend(k.as_bytes());
+            b.push(0);
+        };
+        let text = |b: &mut Vec<u8>, k: &str, v: &str| {
+            b.push(1);
+            b.extend(k.as_bytes());
+            b.push(0);
+            b.extend(v.as_bytes());
+            b.push(0);
+        };
+        let int = |b: &mut Vec<u8>, k: &str, v: u32| {
+            b.push(2);
+            b.extend(k.as_bytes());
+            b.push(0);
+            b.extend(v.to_le_bytes());
+        };
+        map(&mut b, "shortcuts");
+        map(&mut b, "0");
+        int(&mut b, "appid", 2293937255);
+        text(&mut b, "AppName", "Roblox");
+        text(&mut b, "Exe", "/home/u/.local/bin/gset %command%");
+        text(&mut b, "LaunchOptions", "");
+        map(&mut b, "tags");
+        text(&mut b, "0", "Favorites");
+        b.push(8);
+        b.push(8);
+        map(&mut b, "1");
+        int(&mut b, "appid", 4245226616);
+        text(&mut b, "appname", "Fishao");
+        text(&mut b, "exe", "\"/games/Fishao/FishaoGame.exe\"");
+        text(&mut b, "LaunchOptions", "/home/u/.local/bin/gset %command%");
+        int(&mut b, "LastPlayTime", 1);
+        b.push(8);
+        b.push(8);
+        b.push(8);
+        let s = parse_shortcuts(&b);
+        assert_eq!(s.len(), 2);
+        assert_eq!(s[&2293937255].target, "/home/u/.local/bin/gset %command%");
+        assert_eq!(
+            s[&4245226616].target, "/games/Fishao/FishaoGame.exe",
+            "quotes go"
+        );
+        assert_eq!(
+            s[&4245226616].launch_options,
+            "/home/u/.local/bin/gset %command%"
+        );
+        assert!(
+            parse_shortcuts(&b[..b.len() / 2]).len() <= 1,
+            "a cut file doesn't panic"
+        );
+    }
 
     #[test]
     fn reads_steams_text_files() {

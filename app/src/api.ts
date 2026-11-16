@@ -124,7 +124,8 @@ export interface GameView {
   presets: PresetView[];
   in_use: { preset?: string | null; why: PresetWhy };
   pinned?: string | null;
-  launch: { kind: "steam" | "shortcut" | "other"; line: string; steam_now?: string | null; uses_gset?: boolean | null };
+  /** What Steam should have for the game (`line`, in `field`), what it has now, and whether that's right. */
+  launch: { kind: "steam" | "shortcut" | "other"; field: "launch_options" | "target" | "wrapper"; line: string; now?: string | null; ok?: boolean | null };
   screens: Screen[];
   last_played?: number | null;
 }

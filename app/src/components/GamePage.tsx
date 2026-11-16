@@ -193,33 +193,41 @@ function NotUsed({ g, view }: { g: GameView; view: string }) {
 
 function Launch({ g }: { g: GameView }) {
   const L = g.launch;
-  const steamNow = L.steam_now?.trim();
+  const now = L.now?.trim();
+  const target = L.field === "target";
+  const title = target ? "Shortcut target" : L.field === "wrapper" ? "Wrapper command" : "Launch option";
   let status: React.ReactNode;
-  if (g.info.script) status = <span className="status">Started by its own script</span>;
-  else if (L.kind === "steam" && L.uses_gset)
+  if (L.ok)
     status = (
       <span className="status">
         <Check size={13} />
-        Steam runs GSet for this game
+        {target ? "Steam starts its script" : "Steam runs GSet for this game"}
       </span>
     );
-  else if (L.kind === "steam")
+  else if (L.ok === false)
     status = (
-      <span className="status warn" title={steamNow ? `Steam runs: ${steamNow}` : undefined}>
+      <span className="status warn">
         <AlertTriangle size={13} />
-        {steamNow ? "Steam still runs something else" : "Not in Steam’s launch options yet"}
+        {target ? "The shortcut’s Target is something else" : now ? "Steam still runs something else" : `Not in the ${L.kind === "shortcut" ? "shortcut’s " : ""}launch options yet`}
       </span>
     );
-  else status = <span className="status">{L.kind === "shortcut" ? "In the shortcut’s launch options" : "As the launcher’s wrapper command"}</span>;
+  else status = <span className="status">{L.field === "wrapper" ? "As the launcher’s wrapper command" : "In the shortcut’s launch options"}</span>;
+  const hint =
+    L.ok === false && target && now && /(^|\/)gset(\s|$)/.test(now)
+      ? "GSet isn’t needed in Steam for this game. %command% only works in Launch Options: in the Target, Steam passes it as text."
+      : L.ok === false && !target && L.kind === "shortcut"
+        ? "Goes in the shortcut’s Launch Options, not its Target."
+        : null;
   return (
     <div className="launch">
       <div className="lab">
-        <b>{L.kind === "other" ? "Wrapper command" : "Launch option"}</b>
+        <b>{title}</b>
         <code className="selectable">{L.line}</code>
-        {L.kind === "steam" && !L.uses_gset && steamNow && <code className="selectable" style={{ color: "var(--ink-3)" }}>now: {steamNow}</code>}
+        {L.ok === false && now && <code className="selectable" style={{ color: "var(--ink-3)" }}>now: {now}</code>}
+        {hint && <small>{hint}</small>}
       </div>
       {status}
-      <button type="button" className="btn" onClick={() => copy(L.line, "Launch option")}>
+      <button type="button" className="btn" onClick={() => copy(L.line, target ? "Target" : title)}>
         <Copy size={14} />
         Copy
       </button>
@@ -333,8 +341,7 @@ export function GamePage({ entering }: { entering: boolean }) {
           )}
           {g.info.script ? (
             <div className="script-note">
-              {g.info.name} is started by a script of yours: <code>{g.info.script}</code>. GSet runs it as it is, so the settings below don’t apply to this game; its own settings stay in
-              {" "}
+              {g.info.name} is started by a script of yours, <code>{g.info.script}</code>, which Steam runs as the shortcut’s Target. GSet doesn’t change how it starts, so it has no settings here: they stay in{" "}
               <code>~/.config/launch-options/{g.key}.conf</code>.
             </div>
           ) : (
