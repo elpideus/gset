@@ -1216,6 +1216,8 @@ name = "gset-cli"
 version = "0.1.3"
 dependencies = [
  "gset-core",
+ "libc",
+ "serde_json",
 ]
 
 [[package]]

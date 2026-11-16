@@ -213,6 +213,9 @@ pub struct GameInfo {
     pub mouse_section: Option<String>,
     /// a script of yours that starts the game instead of GSet's own launch (the settings then don't apply)
     pub script: Option<String>,
+    /// how GSet starts a game outside Steam (sober, umu, twintail; see runner.rs). None: Steam's
+    /// (or a launcher's) own command, wrapped
+    pub runner: Option<String>,
 }
 
 #[derive(Debug)]
@@ -293,6 +296,7 @@ impl GameConfig {
             via: s("via"),
             mouse_section: s("mouse_section"),
             script: s("script"),
+            runner: s("runner"),
         };
         let mut presets = BTreeMap::new();
         if let Some(t) = doc.get("presets").and_then(Item::as_table_like) {
@@ -333,6 +337,7 @@ impl GameConfig {
         put("engine", info.engine.as_deref());
         put("mouse_section", info.mouse_section.as_deref());
         put("script", info.script.as_deref());
+        put("runner", info.runner.as_deref());
         match info.steam {
             Some(id) => {
                 t.insert("steam", toml_edit::value(id as i64));

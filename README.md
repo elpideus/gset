@@ -31,7 +31,10 @@ Then, in Steam: a game → Properties → Launch Options:
 ```
 
 For a non-Steam game added to Steam, the line goes in the same Launch Options field, never in
-the shortcut's Target: Steam fills in `%command%` only in Launch Options.
+the shortcut's Target: Steam fills in `%command%` only in Launch Options. GSet can also start some
+games outside Steam by itself: Roblox through Sober, Windows games through umu-run, and games
+installed with TwintailLauncher. Their shortcut's Target is the launcher itself; see
+[docs/settings.md](docs/settings.md#games-outside-steam).
 
 The AppImage puts the launcher in `~/.local/bin/gset` the first time it runs; the packages install
 it as `/usr/bin/gset`. GSet's window shows the exact line for each game, with a Copy button.

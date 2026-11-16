@@ -6,6 +6,7 @@
 
 use crate::config::GameInfo;
 use crate::resolve::Resolved;
+use crate::runner::{Runner, SOBER_APP, TWINTAIL, TwintailRun};
 use crate::schema::Schema;
 use crate::screen::Screen;
 use crate::value::Value;
@@ -41,6 +42,7 @@ impl Host {
             })
         };
         Host {
+            home: paths.home.clone(),
             wayland_display: std::env::var("WAYLAND_DISPLAY").ok(),
             mangohud_config: std::env::var("MANGOHUD_CONFIG").ok(),
             clipboard_helper: if exec(&helper) {
@@ -56,6 +58,8 @@ impl Host {
 /// What the computer offers at launch time.
 #[derive(Clone, Debug, Default)]
 pub struct Host {
+    /// your home folder, for ~ in paths you typed
+    pub home: PathBuf,
     pub wayland_display: Option<String>,
     /// MANGOHUD_CONFIG as GSet was started with it
     pub mangohud_config: Option<String>,
@@ -87,6 +91,16 @@ pub struct Plan {
     pub fixes: Vec<String>,
     /// settings that couldn't be used, and why
     pub notes: Vec<String>,
+    /// the folder the game starts in (umu: the program's)
+    pub cwd: Option<String>,
+    /// started from Steam: go back to the desktop's environment first, so Steam's runtime PATH
+    /// and libraries don't reach flatpak or umu-run
+    pub desktop_env: bool,
+    /// and drop Steam's ids (SteamAppId and the like): some launchers lock features when they see
+    /// Steam, and DW-Proton's fixes expect them gone
+    pub drop_steam_ids: bool,
+    /// TwintailLauncher starts the game: the launcher waits for it instead of becoming it
+    pub twintail: Option<TwintailRun>,
 }
 
 impl Plan {
@@ -135,7 +149,9 @@ pub fn build(
     host: &Host,
 ) -> Plan {
     let mut plan = Plan::default();
-    let mut args: Vec<String> = incoming.to_vec();
+    let runner = Runner::of(info);
+    // a game GSet starts itself gets only what's meant for it from Steam's command
+    let mut args: Vec<String> = runner.game_args(incoming);
     let engine = r.text("engine");
     let gamescope = r.on("gamescope");
 
@@ -346,13 +362,105 @@ pub fn build(
         });
     }
 
-    // the wrappers, from the inside out
-    let mut argv = args;
-    if r.on("obs_capture") {
-        argv.insert(0, "obs-gamecapture".into());
-    }
-    if mangohud {
-        argv.insert(0, "mangohud".into());
+    // the game's own command: Steam's, or the one its runner makes
+    let mut argv = match runner {
+        Runner::Command => args,
+        Runner::Umu => {
+            let program = expand(&host.home, &r.text("umu_program"));
+            let prefix = expand(&host.home, &r.text("wine_prefix"));
+            let proton = expand(&host.home, &r.text("proton"));
+            if program.is_empty() {
+                plan.notes
+                    .push("umu-run: the game’s program isn’t set (How it starts → Program)".into());
+            }
+            for (k, v) in [
+                ("GAMEID", r.text("umu_game_id")),
+                ("PROTONPATH", proton),
+                ("WINEPREFIX", prefix),
+            ] {
+                if !v.is_empty() {
+                    env.push((k.into(), v));
+                }
+            }
+            plan.cwd = std::path::Path::new(&program)
+                .parent()
+                .filter(|d| !d.as_os_str().is_empty())
+                .map(|d| d.display().to_string());
+            plan.desktop_env = true;
+            plan.drop_steam_ids = true;
+            let mut a = vec!["umu-run".to_string(), program];
+            a.extend(args);
+            a
+        }
+        Runner::Sober => {
+            // the variables become flatpak's --env, added at the end, once they're all known
+            plan.desktop_env = true;
+            let mut a: Vec<String> = [
+                "flatpak",
+                "run",
+                "--branch=stable",
+                "--arch=x86_64",
+                "--command=sober",
+                "--file-forwarding",
+                SOBER_APP,
+                "--",
+                "@@u",
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+            a.extend(args);
+            a.push("@@".into());
+            a
+        }
+        Runner::Twintail => {
+            let mut install = r.text("twintail_install");
+            let mut rest = Vec::new();
+            let mut it = args.into_iter();
+            while let Some(a) = it.next() {
+                if let Some(id) = a.strip_prefix("--install=") {
+                    if install.is_empty() {
+                        install = id.to_string();
+                    }
+                } else if a == "--install" {
+                    if let Some(id) = it.next()
+                        && install.is_empty()
+                    {
+                        install = id;
+                    }
+                } else {
+                    rest.push(a);
+                }
+            }
+            if install.is_empty() {
+                plan.notes.push(
+                    "TwintailLauncher: the install id isn’t set (How it starts → Install id)"
+                        .into(),
+                );
+            }
+            let secs = |k: &str| r.num(k).max(0.0) as u64;
+            plan.twintail = Some(TwintailRun {
+                install: install.clone(),
+                update_check: r.on("tt_update_check"),
+                runtime_update: r.on("tt_runtime_update"),
+                mangohud_hidden: r.on("tt_mangohud_hidden"),
+                game_wait: secs("tt_game_wait"),
+                exit_grace: secs("tt_exit_grace"),
+                short_run: secs("tt_short_run"),
+            });
+            let mut a = vec![TWINTAIL.to_string(), format!("--install={install}")];
+            a.extend(rest);
+            a
+        }
+    };
+    // the wrappers, from the inside out (Sober's sandbox gets MangoHud and the OBS hook as layers)
+    if runner.host_wrappers() {
+        if r.on("obs_capture") {
+            argv.insert(0, "obs-gamecapture".into());
+        }
+        if mangohud {
+            argv.insert(0, "mangohud".into());
+        }
     }
     if gamescope {
         if r.on("clipboard") {
@@ -459,7 +567,37 @@ pub fn build(
         }
     }
     plan.env = merged;
+    // Sober: every variable goes into its sandbox through flatpak's --env, after the layers' own
+    if runner == Runner::Sober
+        && let Some(at) = plan.argv.iter().position(|a| a == SOBER_APP)
+    {
+        let mut flags = Vec::new();
+        if r.on("obs_capture") {
+            flags.push("--env=OBS_VKCAPTURE=1".to_string());
+        }
+        if mangohud {
+            // the sandbox doesn't see ~/.config: this lets MangoHud read MangoHud.conf (read_cfg)
+            flags.push("--env=MANGOHUD=1".into());
+            flags.push("--filesystem=xdg-config/MangoHud:ro".into());
+        }
+        flags.extend(plan.env.drain(..).map(|(k, v)| format!("--env={k}={v}")));
+        plan.argv.splice(at..at, flags);
+    }
     plan
+}
+
+/// ~ and $HOME at the start of a path you typed.
+fn expand(home: &std::path::Path, p: &str) -> String {
+    let p = p.trim();
+    if home.as_os_str().is_empty() {
+        return p.to_string();
+    }
+    for prefix in ["~/", "$HOME/", "${HOME}/"] {
+        if let Some(rest) = p.strip_prefix(prefix) {
+            return home.join(rest).display().to_string();
+        }
+    }
+    p.to_string()
 }
 
 fn or_unknown(s: &str) -> &str {
@@ -717,6 +855,137 @@ mod tests {
         assert_eq!(dlss.len(), 1, "one entry per variable: {:?}", p.env);
         assert_eq!(dlss[0].1, "off", "yours wins");
         assert_eq!(redact("-AUTH_PASSWORD=abc123"), "-AUTH_PASSWORD=…");
+    }
+
+    fn runner_plan(runner: &str, values: &[(&str, Value)], incoming: &[&str], host: &Host) -> Plan {
+        let d = tempfile::tempdir().unwrap();
+        let paths = Paths {
+            config: d.path().join("c"),
+            data: d.path().join("d"),
+            state: d.path().join("s"),
+            home: d.path().into(),
+        };
+        // your defaults for every game: what a runner can't use must not reach it
+        std::fs::create_dir_all(&paths.config).unwrap();
+        std::fs::write(
+            paths.config.join("gset.toml"),
+            "[defaults]\ngamescope = true\nnvidia_only = true\nrun_before = \"gamemoderun\"\nmangohud = true\n",
+        )
+        .unwrap();
+        let app = AppConfig::load(&paths).unwrap();
+        let info = GameInfo {
+            name: "G".into(),
+            mouse_section: Some("G".into()),
+            runner: Some(runner.into()),
+            ..Default::default()
+        };
+        let mut game = GameConfig::new(&paths, "g", info.clone());
+        for (k, v) in values {
+            game.set(k, Some(v.clone()));
+        }
+        let schema = Schema::of(None, Runner::of(&info));
+        let r = crate::resolve::resolve(&schema, &app, &game, None);
+        let incoming: Vec<String> = incoming.iter().map(|s| s.to_string()).collect();
+        build(&schema, &r, &info, &incoming, &[], host)
+    }
+
+    /// Roblox as roblox-launch starts it.
+    #[test]
+    fn sober_like_roblox_launch() {
+        let p = runner_plan(
+            "sober",
+            &[
+                ("mangohud_hidden", true.into()),
+                ("obs_capture", true.into()),
+                ("mouse", "dpi".into()),
+                ("env", "A=1".into()),
+                ("run_before", "".into()),
+            ],
+            &["/bin/sh"],
+            &Host {
+                game_mouse: true,
+                ..Host::default()
+            },
+        );
+        assert_eq!(
+            p.argv.join(" "),
+            "flatpak run --branch=stable --arch=x86_64 --command=sober --file-forwarding \
+             --env=OBS_VKCAPTURE=1 --env=MANGOHUD=1 --filesystem=xdg-config/MangoHud:ro \
+             --env=A=1 --env=MANGOHUD_CONFIG=read_cfg,no_display org.vinegarhq.Sober -- @@u @@"
+        );
+        assert!(p.env.is_empty(), "all inside the sandbox: {:?}", p.env);
+        assert!(p.desktop_env && !p.drop_steam_ids);
+        assert!(p.mouse.is_some_and(|m| m.start_service));
+        // a link Steam passes still reaches Sober
+        let p = runner_plan("sober", &[], &["roblox://placeId=1"], &Host::default());
+        assert!(p.argv.join(" ").ends_with("-- @@u roblox://placeId=1 @@"));
+    }
+
+    /// NIKKE as nikke-launch starts it.
+    #[test]
+    fn umu_like_nikke_launch() {
+        let home = std::path::PathBuf::from("/home/u");
+        let p = runner_plan(
+            "umu",
+            &[
+                (
+                    "umu_program",
+                    "/g/prefix/drive_c/NIKKE/Launcher/nikke_launcher.exe".into(),
+                ),
+                ("wine_prefix", "/g/prefix".into()),
+                (
+                    "proton",
+                    "~/.local/share/Steam/compatibilitytools.d/DW-Proton Latest".into(),
+                ),
+                ("umu_game_id", "umu-nikke".into()),
+                ("gamescope", false.into()),
+                ("mangohud_hidden", true.into()),
+                ("obs_capture", true.into()),
+                ("run_before", "".into()),
+            ],
+            &[],
+            &Host {
+                home: home.clone(),
+                ..Host::default()
+            },
+        );
+        assert_eq!(
+            p.argv.join(" "),
+            "mangohud obs-gamecapture umu-run /g/prefix/drive_c/NIKKE/Launcher/nikke_launcher.exe"
+        );
+        assert_eq!(p.env_value("GAMEID"), Some("umu-nikke"));
+        assert_eq!(p.env_value("WINEPREFIX"), Some("/g/prefix"));
+        assert_eq!(
+            p.env_value("PROTONPATH"),
+            Some("/home/u/.local/share/Steam/compatibilitytools.d/DW-Proton Latest")
+        );
+        assert_eq!(p.env_value("DXVK_FILTER_DEVICE_NAME"), Some("NVIDIA"));
+        assert_eq!(p.cwd.as_deref(), Some("/g/prefix/drive_c/NIKKE/Launcher"));
+        assert!(p.desktop_env && p.drop_steam_ids);
+    }
+
+    /// Genshin through TwintailLauncher: only the mouse and the GPU check are GSet's.
+    #[test]
+    fn twintail_takes_the_install_and_nothing_else() {
+        let p = runner_plan(
+            "twintail",
+            &[("tt_exit_grace", Value::Int(12)), ("mouse", "dpi".into())],
+            &["--install=01a1-ff"],
+            &Host {
+                game_mouse: true,
+                ..Host::default()
+            },
+        );
+        assert_eq!(
+            p.argv.join(" "),
+            "/usr/bin/twintaillauncher --install=01a1-ff"
+        );
+        assert!(p.env.is_empty(), "{:?}", p.env);
+        let t = p.twintail.expect("Twintail runs it");
+        assert_eq!(t.install, "01a1-ff");
+        assert_eq!((t.exit_grace, t.game_wait, t.short_run), (12, 180, 60));
+        assert!(t.update_check && t.runtime_update && t.mangohud_hidden);
+        assert!(p.mouse.is_some());
     }
 
     #[test]

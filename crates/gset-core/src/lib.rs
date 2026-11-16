@@ -9,6 +9,7 @@ pub mod paths;
 pub mod plan;
 pub mod profile;
 pub mod resolve;
+pub mod runner;
 pub mod schema;
 pub mod screen;
 pub mod steam;
@@ -108,6 +109,7 @@ pub fn find_or_create(
         ),
         mouse_section: None,
         script: None,
+        runner: None,
     };
     let mut game = GameConfig::new(paths, &key, info);
     for (k, v) in resolve::start_values(profile, app.new_games) {

@@ -9,6 +9,7 @@ use gset_core::config::{self, AppConfig, GameConfig};
 use gset_core::fixes::{self, FixContext};
 use gset_core::plan::{self, Host, Plan};
 use gset_core::resolve::{self, PresetWhy};
+use gset_core::runner::Runner;
 use gset_core::schema::Schema;
 use gset_core::{Paths, Profiles, import, profile, screen};
 use std::io::{Read, Write};
@@ -16,6 +17,8 @@ use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 use std::time::{Duration, Instant};
+
+mod twintail;
 
 const HELP: &str = "\
 gset: game launch settings
@@ -145,7 +148,11 @@ fn launch(paths: &Paths, o: &Opts, mut args: Vec<String>) -> ExitCode {
     // in (it does only in Launch Options). Dropped: a game with a script of its own still starts.
     let pasted = args.iter().any(|a| a == "%command%");
     args.retain(|a| a != "%command%");
-    if args.is_empty() && o.game.is_none() && !pasted {
+    // a shortcut whose Target is gset itself passes nothing: Steam's ids say which game it is
+    let from_steam = ["SteamAppId", "SteamGameId"]
+        .iter()
+        .any(|k| std::env::var(k).is_ok_and(|v| !v.is_empty() && v != "0"));
+    if args.is_empty() && o.game.is_none() && !pasted && !from_steam {
         eprint!("{HELP}");
         return ExitCode::from(2);
     }
@@ -228,7 +235,8 @@ fn launch(paths: &Paths, o: &Opts, mut args: Vec<String>) -> ExitCode {
         }
         return run(&p, o.dry_run);
     }
-    if args.is_empty() {
+    let runner = Runner::of(&game.info);
+    if args.is_empty() && runner == Runner::Command {
         let why = if pasted {
             format!("Nothing to start for {}: {wrong_field}", game.info.name)
         } else {
@@ -241,7 +249,7 @@ fn launch(paths: &Paths, o: &Opts, mut args: Vec<String>) -> ExitCode {
     }
 
     let profile = game.info.profile.as_deref().and_then(|id| profiles.get(id));
-    let schema = Schema::for_game(profile);
+    let schema = Schema::of(profile, runner);
     let screens = screen::screens();
     let (preset, why) = resolve::pick_preset(&app, &game, &screens, o.preset.as_deref());
     let values = resolve::resolve(&schema, &app, &game, preset.as_deref());
@@ -297,6 +305,32 @@ fn launch(paths: &Paths, o: &Opts, mut args: Vec<String>) -> ExitCode {
         for n in &p.notes {
             println!("note:    {n}");
         }
+        if p.desktop_env {
+            println!(
+                "env:     the desktop's, not Steam's runtime{}",
+                if p.drop_steam_ids {
+                    ", without Steam's ids"
+                } else {
+                    ""
+                }
+            );
+        }
+        if let Some(d) = &p.cwd {
+            println!("in:      {d}");
+        }
+        if let Some(t) = &p.twintail {
+            println!(
+                "twintail: install {}, update check {}, runtime update {}, MangoHud hidden {}, \
+                 game wait {}s, quit {}s after it closes, kept open below {}s",
+                t.install,
+                yes(t.update_check),
+                yes(t.runtime_update),
+                yes(t.mangohud_hidden),
+                t.game_wait,
+                t.exit_grace,
+                t.short_run
+            );
+        }
         println!("run:     {}", plan::quote(&p.argv));
         return ExitCode::SUCCESS;
     }
@@ -343,7 +377,39 @@ fn launch(paths: &Paths, o: &Opts, mut args: Vec<String>) -> ExitCode {
         );
         return ExitCode::from(1);
     }
+    // umu-run: a missing program is a game that isn't installed (or a wrong path)
+    if let Some(i) = p.argv.iter().position(|a| a == "umu-run")
+        && let Some(prog) = p.argv.get(i + 1)
+        && !Path::new(prog).is_file()
+    {
+        warn(
+            paths,
+            false,
+            &format!("{} isn't installed", game.info.name),
+            &format!("{prog} is missing (How it starts → Program)."),
+        );
+        return ExitCode::from(1);
+    }
     log_launch(paths, false, &game, &found.how, &preset_text, &p);
+    if let Some(t) = &p.twintail {
+        let name = game.info.name.clone();
+        let log = |m: &str| {
+            append_log(
+                paths,
+                &format!("{} {name}: {m}", gset_core::clock::now_text()),
+            )
+        };
+        return twintail::run(
+            &twintail::Ctx {
+                home: &paths.home,
+                state: &paths.state,
+                game: &game.info.name,
+                log: &log,
+            },
+            t,
+            &p.argv,
+        );
+    }
     run(&p, false)
 }
 
@@ -355,6 +421,38 @@ fn preset_name(app: &AppConfig, id: &str) -> String {
         },
         None => id.into(),
     }
+}
+
+/// Started from Steam: back to the desktop's environment, which steam.sh keeps in SYSTEM_*, so
+/// Steam's runtime PATH and libraries don't reach flatpak or umu-run. With `drop_ids`, Steam's ids
+/// and its overlay go too.
+fn desktop_env(cmd: &mut Command, drop_ids: bool) {
+    if let Ok(path) = std::env::var("SYSTEM_PATH") {
+        cmd.env("PATH", path);
+        cmd.env_remove("LD_PRELOAD");
+        cmd.env_remove("LD_LIBRARY_PATH");
+        if let Ok(lib) = std::env::var("SYSTEM_LD_LIBRARY_PATH")
+            && !lib.is_empty()
+        {
+            cmd.env("LD_LIBRARY_PATH", lib);
+        }
+        if drop_ids {
+            for (k, _) in std::env::vars_os() {
+                let k = k.to_string_lossy();
+                if k.starts_with("Steam") && k[5..].chars().all(|c| c.is_ascii_alphabetic())
+                    || k.starts_with("STEAM")
+                        && k.chars().all(|c| c.is_ascii_uppercase() || c == '_')
+                    || k.starts_with("ENABLE_VK_LAYER_VALVE_")
+                {
+                    cmd.env_remove(&*k);
+                }
+            }
+        }
+    }
+}
+
+fn yes(b: bool) -> &'static str {
+    if b { "on" } else { "off" }
 }
 
 /// Whether a word of the command is this file (a path to it, links followed).
@@ -389,10 +487,15 @@ fn run(p: &Plan, dry_run: bool) -> ExitCode {
     let Some((prog, rest)) = p.argv.split_first() else {
         return ExitCode::from(1);
     };
-    let err = Command::new(prog)
-        .args(rest)
-        .envs(p.env.iter().map(|(k, v)| (k, v)))
-        .exec();
+    let mut cmd = Command::new(prog);
+    cmd.args(rest);
+    if p.desktop_env {
+        desktop_env(&mut cmd, p.drop_steam_ids);
+    }
+    if let Some(d) = &p.cwd {
+        cmd.current_dir(d);
+    }
+    let err = cmd.envs(p.env.iter().map(|(k, v)| (k, v))).exec();
     // exec only returns when it failed
     eprintln!("gset: can't start {prog}: {err}");
     notify(
@@ -619,7 +722,10 @@ fn run_import(paths: &Paths, dir: Option<String>, dry_run: bool, force: bool) ->
             );
             continue;
         }
-        let schema = Schema::for_game(r.game.info.profile.as_deref().and_then(|p| profiles.get(p)));
+        let schema = Schema::of(
+            r.game.info.profile.as_deref().and_then(|p| profiles.get(p)),
+            Runner::of(&r.game.info),
+        );
         if !r.script_mode {
             import::pin_against_defaults(&mut r.game, &app, &schema);
         }

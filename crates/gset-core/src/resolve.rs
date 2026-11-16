@@ -82,6 +82,11 @@ pub fn resolve(
         }
         used = Some(id.to_string());
     }
+    // what the game's runner can't use doesn't reach it, even from your defaults for every game
+    for k in crate::runner::Runner::of(&game.info).excluded() {
+        values.remove(&k);
+        source.remove(&k);
+    }
     values.insert(
         "engine".into(),
         Value::str(game.info.engine.clone().unwrap_or_default()),

@@ -35,6 +35,7 @@ engine = "unreal"             # unity or unreal: how the API and resolution reac
 via = "Steam"
 mouse_section = "NTE"         # game-mouse's section, for the DPI switch
 # script = "~/.local/bin/x"   # a script of yours starts the game instead (the settings don't apply)
+# runner = "umu"              # GSet starts a game outside Steam itself: sober, umu or twintail
 
 [settings]
 gamescope = true
@@ -48,6 +49,26 @@ vsync = "off"
 
 # pinned = "work"             # use this preset whatever the screen
 ```
+
+## Games outside Steam
+
+A game file with a `runner` is started by GSet itself, not from the command Steam passes. In
+Steam, the game is a non-Steam shortcut whose **Target** is the launcher (`/home/you/.local/bin/gset`)
+and whose Launch Options are empty: Steam's ids tell gset which game it is. Outside Steam,
+`gset --game=<game>` starts it the same way.
+
+| Runner | For | Its own settings |
+|---|---|---|
+| `sober` | Roblox through Sober (the Flatpak `org.vinegarhq.Sober`). MangoHud and the OBS hook reach it as Vulkan layers inside the sandbox (`--env`), with the Flatpak extensions for its runtime. | none: MangoHud, OBS capture, the mouse, variables and arguments are GSet's own |
+| `umu` | A Windows game outside Steam, through `umu-run` | `umu_program` (the .exe), `wine_prefix`, `proton` (a Proton folder), `umu_game_id` (umu's fixes, `umu-default` for none) |
+| `twintail` | A game installed with TwintailLauncher, which starts it with its own per-install settings (runner, MangoHud, FPS unlock…) | `twintail_install` (its `--install` id), `tt_update_check`, `tt_runtime_update`, `tt_mangohud_hidden`, `tt_game_wait`, `tt_exit_grace`, `tt_short_run` |
+
+Sober and umu-run start from the desktop's environment, not Steam's runtime (umu-run also
+without Steam's ids). For Twintail, gset stays while the game runs: it checks for a game update
+first (Twintail's window opens instead when there is one), installs a newer Steam Runtime 4
+before Twintail starts, and quits Twintail a few seconds after the game closes, unless the game
+closed within a minute. A runner shows only the settings that reach the game: a Twintail game
+keeps the mouse and the GPU check.
 
 ## The settings
 

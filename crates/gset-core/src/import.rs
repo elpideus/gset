@@ -7,6 +7,7 @@ use crate::config::{AppConfig, GameConfig, GameInfo};
 use crate::paths::Paths;
 use crate::plan::{render_size, words};
 use crate::profile::Profiles;
+use crate::runner::Runner;
 use crate::schema::Schema;
 use crate::value::Value;
 use std::collections::BTreeMap;
@@ -108,6 +109,16 @@ fn known_script_engine(name: &str) -> Option<Option<&'static str>> {
     }
 }
 
+/// The scripts whose games GSet now starts itself, with a runner (runner.rs).
+fn runner_for_script(name: &str) -> Option<Runner> {
+    match name {
+        "roblox-launch" => Some(Runner::Sober),
+        "nikke-launch" => Some(Runner::Umu),
+        "twintail-steam" | "honkai-launch" => Some(Runner::Twintail),
+        _ => None,
+    }
+}
+
 /// Imports every *.conf in `dir`. Nothing is written: save the games (and the app file) yourself.
 pub fn import_dir(dir: &Path, paths: &Paths, profiles: &Profiles) -> Vec<Imported> {
     let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
@@ -171,6 +182,7 @@ pub fn import_one(
             .cloned()
             .filter(|s| !s.is_empty()),
         script: None,
+        runner: None,
     };
     let mut imported = Imported {
         key: key.clone(),
@@ -211,6 +223,16 @@ pub fn import_one(
             .map(|t| read_legacy(&t, true))
             .unwrap_or_default();
         (d, gw_engine.filter(|e| e == "unity" || e == "unreal"))
+    } else if let Some(runner) = runner_for_script(&script_name) {
+        // honkai-launch only hands its conf to twintail-steam, which has the defaults
+        let text = if script_name == "honkai-launch" {
+            std::fs::read_to_string(paths.home.join(".local/bin/twintail-steam"))
+                .unwrap_or_default()
+        } else {
+            script_text.clone()
+        };
+        info.runner = runner.id().map(String::from);
+        (read_legacy(&text, true), None)
     } else {
         // a script with logic of its own: it keeps starting the game, with its own conf
         info.script = script.as_ref().map(|s| tilde(s, &paths.home));
@@ -244,7 +266,11 @@ pub fn import_one(
     }
     let on = |s: &str| v.get(s).is_some_and(|x| x == "1");
     let mut set: BTreeMap<String, Value> = BTreeMap::new();
-    let schema = Schema::for_game(info.profile.as_deref().and_then(|p| profiles.get(p)));
+    let runner = Runner::of(&info);
+    let schema = Schema::of(
+        info.profile.as_deref().and_then(|p| profiles.get(p)),
+        runner,
+    );
 
     // what every old script did, whether or not its conf mentions it
     set.insert("gamescope".into(), on("GAMESCOPE").into());
@@ -407,6 +433,16 @@ pub fn import_one(
         }
     }
 
+    runner_values(
+        runner,
+        &v,
+        &script_text,
+        &info,
+        paths,
+        &mut set,
+        &mut imported.notes,
+    );
+
     // in the order GSet shows them, so the file reads like the window
     for def in &schema.settings {
         if let Some(val) = set.remove(&def.key) {
@@ -415,6 +451,106 @@ pub fn import_one(
     }
     imported.game.set_info(info);
     Ok(imported)
+}
+
+/// What a runner needs that the old script kept to itself.
+fn runner_values(
+    runner: Runner,
+    v: &BTreeMap<String, String>,
+    script: &str,
+    info: &GameInfo,
+    paths: &Paths,
+    set: &mut BTreeMap<String, Value>,
+    notes: &mut Vec<String>,
+) {
+    let tidy = |p: &str| match p.strip_prefix("$HOME/") {
+        Some(rest) => format!("~/{rest}"),
+        None => p.to_string(),
+    };
+    match runner {
+        Runner::Command | Runner::Sober => {}
+        Runner::Umu => {
+            let prefix = v.get("WINEPREFIX").cloned().unwrap_or_default();
+            set.insert("wine_prefix".into(), Value::str(tidy(&prefix)));
+            set.insert(
+                "proton".into(),
+                Value::str(tidy(v.get("PROTON").map(String::as_str).unwrap_or(""))),
+            );
+            // the script's exe= line, with its prefix variable filled in
+            let program = script
+                .lines()
+                .find_map(|l| l.trim_start().strip_prefix("exe="))
+                .and_then(sh_value)
+                .map(|e| {
+                    let var = full_var(script, "WINEPREFIX");
+                    e.replace(&format!("${{{var}}}"), &prefix)
+                        .replace(&format!("${var}"), &prefix)
+                })
+                .unwrap_or_default();
+            if program.is_empty() || program.contains('$') {
+                notes.push("umu-run: the game’s program couldn’t be read from the script".into());
+            }
+            set.insert("umu_program".into(), Value::str(tidy(&program)));
+            let id = script
+                .split_whitespace()
+                .find_map(|w| w.strip_prefix("GAMEID="))
+                .unwrap_or("umu-default");
+            set.insert("umu_game_id".into(), Value::str(id));
+        }
+        Runner::Twintail => {
+            let on = |k: &str, default: bool| v.get(k).map_or(default, |x| x == "1");
+            let secs = |k: &str, default: i64| {
+                v.get(k)
+                    .and_then(|n| n.parse::<i64>().ok())
+                    .unwrap_or(default)
+            };
+            set.insert("tt_update_check".into(), on("UPDATE_CHECK", true).into());
+            set.insert(
+                "tt_runtime_update".into(),
+                on("RUNTIME_UPDATE", true).into(),
+            );
+            set.insert(
+                "tt_mangohud_hidden".into(),
+                on("MANGOHUD_HIDDEN", true).into(),
+            );
+            set.insert("tt_game_wait".into(), Value::Int(secs("GAME_WAIT", 180)));
+            set.insert("tt_exit_grace".into(), Value::Int(secs("EXIT_GRACE", 8)));
+            set.insert("tt_short_run".into(), Value::Int(secs("SHORT_RUN", 60)));
+            // the install id is in the Steam shortcut's launch options
+            let install = info
+                .steam
+                .and_then(|id| {
+                    crate::steam::state(&crate::steam::steam_root(&paths.home))
+                        .shortcuts
+                        .get(&id)
+                        .cloned()
+                })
+                .and_then(|s| {
+                    words(&s.launch_options)
+                        .ok()?
+                        .into_iter()
+                        .find_map(|w| w.strip_prefix("--install=").map(String::from))
+                })
+                .unwrap_or_default();
+            if install.is_empty() {
+                notes.push("TwintailLauncher: the install id isn’t in the Steam shortcut".into());
+            }
+            set.insert("twintail_install".into(), Value::str(install));
+            // Twintail's own pre-launch command started game-mouse: the DPI switch was on
+            if info.mouse_section.is_some() {
+                set.insert("mouse".into(), Value::str("dpi"));
+            }
+        }
+    }
+}
+
+/// The script's name for one of its settings: NIKKE_WINEPREFIX for WINEPREFIX.
+fn full_var(script: &str, short: &str) -> String {
+    script
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .find(|w| w.ends_with(&format!("_{short}")) && w.len() > short.len() + 1)
+        .unwrap_or(short)
+        .to_string()
 }
 
 /// Gamescope's options, split into GSet's settings; the rest stays as "More Gamescope options".

@@ -195,13 +195,15 @@ function Launch({ g }: { g: GameView }) {
   const L = g.launch;
   const now = L.now?.trim();
   const target = L.field === "target";
+  // GSet starts the game itself: the shortcut's Target is gset, not a script
+  const own = target && !!g.info.starts_with;
   const title = target ? "Shortcut target" : L.field === "wrapper" ? "Wrapper command" : "Launch option";
   let status: React.ReactNode;
   if (L.ok)
     status = (
       <span className="status">
         <Check size={13} />
-        {target ? "Steam starts its script" : "Steam runs GSet for this game"}
+        {target && !own ? "Steam starts its script" : "Steam runs GSet for this game"}
       </span>
     );
   else if (L.ok === false)
@@ -213,7 +215,9 @@ function Launch({ g }: { g: GameView }) {
     );
   else status = <span className="status">{L.field === "wrapper" ? "As the launcher’s wrapper command" : "In the shortcut’s launch options"}</span>;
   const hint =
-    L.ok === false && target && now && /(^|\/)gset(\s|$)/.test(now)
+    L.ok === false && own
+      ? `GSet starts ${g.info.name} itself now, so its old script isn’t needed. Leave the Launch Options empty${g.info.starts_with === "TwintailLauncher" ? " (or Twintail’s --install=…)" : ""}.`
+      : L.ok === false && target && now && /(^|\/)gset(\s|$)/.test(now)
       ? "GSet isn’t needed in Steam for this game. %command% only works in Launch Options: in the Target, Steam passes it as text."
       : L.ok === false && !target && L.kind === "shortcut"
         ? "Goes in the shortcut’s Launch Options, not its Target."
@@ -374,7 +378,7 @@ export function GamePage({ entering }: { entering: boolean }) {
               <div className={clsx("cols")}>
                 {groups.map((grp) => (
                   <section key={grp.id} className="group">
-                    <h3>{grp.id === "game" ? `${short} only` : grp.title}</h3>
+                    <h3>{grp.id === "game" ? `${short} only` : grp.id === "runner" ? (g.info.starts_with ?? grp.title) : grp.title}</h3>
                     {grp.defs.map((d) => (
                       <Row key={d.key} def={d} g={g} />
                     ))}

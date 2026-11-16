@@ -2,6 +2,7 @@
 //! The window builds its pages from this; profiles add choices and game-specific settings to it.
 
 use crate::profile::Profile;
+use crate::runner::Runner;
 use crate::value::Value;
 use crate::when::When;
 use serde::Serialize;
@@ -69,6 +70,10 @@ pub struct Group {
 }
 
 pub const GROUPS: &[Group] = &[
+    Group {
+        id: "runner",
+        title: "How it starts",
+    },
     Group {
         id: "screen",
         title: "Screen",
@@ -279,6 +284,54 @@ pub fn builtin() -> Vec<SettingDef> {
     .collect()
 }
 
+/// The settings of a runner of its own (see runner.rs): what GSet needs to start the game itself.
+pub fn runner_settings(runner: Runner) -> Vec<SettingDef> {
+    use Kind::*;
+    let list = match runner {
+        Runner::Command | Runner::Sober => Vec::new(),
+        Runner::Umu => vec![
+            B::new("umu_program", "runner", "Program", Text, "")
+                .help("The game’s .exe, or its launcher’s, inside the prefix.")
+                .placeholder("/games/Game/prefix/drive_c/Game/Launcher.exe")
+                .mono()
+                .local_only(),
+            B::new("wine_prefix", "runner", "Wine prefix", Text, "")
+                .placeholder("/games/Game/prefix")
+                .mono()
+                .local_only(),
+            B::new("proton", "runner", "Proton", Text, "")
+                .help("A Proton folder. ProtonPlus’s “Latest” folders follow new releases.")
+                .placeholder("~/.local/share/Steam/compatibilitytools.d/GE-Proton Latest")
+                .mono()
+                .local_only(),
+            B::new("umu_game_id", "runner", "umu game id", Text, "umu-default")
+                .help("Picks the game’s fixes from umu’s database, such as umu-nikke.")
+                .mono()
+                .local_only(),
+        ],
+        Runner::Twintail => vec![
+            B::new("twintail_install", "runner", "Install id", Text, "")
+                .help("The --install id in Twintail’s own Steam shortcut for the game.")
+                .mono()
+                .local_only(),
+            B::new("tt_update_check", "runner", "Check for game updates first", Toggle, true)
+                .help("When a new version is out, TwintailLauncher’s window opens instead, so you can update and press Play there."),
+            B::new("tt_runtime_update", "runner", "Update Steam Runtime 4 before launching", Toggle, true)
+                .help("Otherwise Twintail updates it while the game is starting, and the launch fails. A broken runtime is always reinstalled."),
+            B::new("tt_mangohud_hidden", "runner", "Start MangoHud hidden", Toggle, true)
+                .help("Right Shift + F12 shows it. MangoHud itself is turned on in TwintailLauncher’s window."),
+            B::new("tt_game_wait", "runner", "Show Twintail if the game hasn’t started after", Number, 180)
+                .range(30.0, 900.0, 10.0, "s"),
+            B::new("tt_exit_grace", "runner", "Quit Twintail when the game has been closed for", Number, 8)
+                .range(3.0, 120.0, 1.0, "s"),
+            B::new("tt_short_run", "runner", "Keep Twintail open if the game closes within", Number, 60)
+                .range(0.0, 600.0, 10.0, "s")
+                .help("A crash, or the game asking for an update or a repair."),
+        ],
+    };
+    list.into_iter().map(|b| b.0).collect()
+}
+
 /// The settings of one game: GSet's own, with what its profile hides and adds.
 #[derive(Clone, Debug, Serialize)]
 pub struct Schema {
@@ -286,8 +339,16 @@ pub struct Schema {
 }
 
 impl Schema {
+    /// A game started from Steam's (or a launcher's) command.
     pub fn for_game(profile: Option<&Profile>) -> Schema {
-        let mut settings = builtin();
+        Schema::of(profile, Runner::Command)
+    }
+
+    /// A game's settings: its runner's own first, then GSet's that reach it, then its profile's.
+    pub fn of(profile: Option<&Profile>, runner: Runner) -> Schema {
+        let excluded = runner.excluded();
+        let mut settings = runner_settings(runner);
+        settings.extend(builtin().into_iter().filter(|d| !excluded.contains(&d.key)));
         if let Some(p) = profile {
             for def in &mut settings {
                 if p.hide.contains(&def.key) {
@@ -348,7 +409,10 @@ mod tests {
 
     #[test]
     fn builtin_settings_are_consistent() {
-        let all = builtin();
+        let mut all = builtin();
+        for r in [Runner::Sober, Runner::Umu, Runner::Twintail] {
+            all.extend(runner_settings(r));
+        }
         let mut keys: Vec<_> = all.iter().map(|d| d.key.as_str()).collect();
         keys.sort_unstable();
         let n = keys.len();

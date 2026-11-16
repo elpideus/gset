@@ -111,6 +111,8 @@ export interface GameView {
     mouse_section?: string | null;
     script?: string | null;
     runner?: string | null;
+    /** GSet starts the game itself this way (Sober, umu-run, TwintailLauncher) */
+    starts_with?: string | null;
   };
   art: Art;
   profile?: { id: string; version: number; notes: string[] } | null;

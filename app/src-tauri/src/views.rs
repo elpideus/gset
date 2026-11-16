@@ -6,6 +6,7 @@ use gset_core::config::{self, AppConfig, GameConfig, NewGames, Preset};
 use gset_core::plan::{self, Host};
 use gset_core::profile::{self, Change, Profiles};
 use gset_core::resolve::{self, PresetWhy, Source};
+use gset_core::runner::Runner;
 use gset_core::schema::{self, Schema, SettingDef};
 use gset_core::screen::{self, Screen};
 use gset_core::steam::{self, SteamState};
@@ -55,12 +56,35 @@ fn art_for(steam_root: &Path, id: Option<u64>) -> Art {
     }
 }
 
+/// What runs the game, for the line under its name: Proton's version, Sober, umu-run's Proton…
 fn runner(state: &SteamState, g: &GameConfig) -> Option<String> {
     if g.info.script.is_some() {
         return Some("its own script".into());
     }
-    let id = g.info.steam?;
-    state.compat_tool.get(&id).map(|t| pretty_tool(t))
+    match Runner::of(&g.info) {
+        Runner::Command => {
+            let id = g.info.steam?;
+            state.compat_tool.get(&id).map(|t| pretty_tool(t))
+        }
+        Runner::Umu => {
+            let proton = g
+                .values
+                .get("proton")
+                .map(|v| v.to_string())
+                .unwrap_or_default();
+            let name = proton
+                .trim_end_matches('/')
+                .rsplit('/')
+                .next()
+                .unwrap_or("");
+            Some(if name.is_empty() {
+                "umu-run".into()
+            } else {
+                format!("umu-run · {name}")
+            })
+        }
+        r => Some(r.title().into()),
+    }
 }
 
 /// "dwproton-11.0-14" stays as it is; "proton_experimental" becomes "Proton Experimental".
@@ -130,7 +154,7 @@ pub fn library() -> Result<Vec<LibraryGame>, String> {
         .iter()
         .map(|g| {
             let p = g.info.profile.as_deref().and_then(|id| c.profiles.get(id));
-            let schema = Schema::for_game(p);
+            let schema = Schema::of(p, Runner::of(&g.info));
             let base = resolve::resolve(&schema, &c.app, g, None);
             LibraryGame {
                 key: g.key.clone(),
@@ -214,6 +238,8 @@ pub struct InfoView {
     mouse_section: Option<String>,
     script: Option<String>,
     runner: Option<String>,
+    /// GSet starts the game itself this way: the title of its "How it starts" settings
+    starts_with: Option<&'static str>,
 }
 
 #[derive(Serialize)]
@@ -312,6 +338,17 @@ fn launch_view(
         .then(|| g.info.steam.and_then(|id| state.shortcuts.get(&id)))
         .flatten();
     let gset_line = format!("{launcher} %command%");
+    // a game GSet starts itself: the shortcut's Target is gset, and Steam's ids tell it which game
+    if kind == "shortcut" && g.info.script.is_none() && Runner::of(&g.info) != Runner::Command {
+        let now = shortcut.map(|s| s.target.clone());
+        return LaunchView {
+            kind,
+            field: "target",
+            ok: now.as_deref().map(starts_with_gset),
+            now,
+            line: launcher.to_string(),
+        };
+    }
     match (kind, &g.info.script) {
         ("shortcut", Some(script)) => {
             let script = c.paths.expand(script);
@@ -360,9 +397,14 @@ fn launch_view(
 
 pub fn game_view(c: &Ctx, g: &GameConfig, state: &SteamState, screens: &[Screen]) -> GameView {
     let p = g.info.profile.as_deref().and_then(|id| c.profiles.get(id));
-    let schema = Schema::for_game(p);
+    let schema = Schema::of(p, Runner::of(&g.info));
     let host = Host::detect(&c.paths);
-    let incoming = vec!["%command%".to_string()];
+    // Steam’s part of the command, as a placeholder; a game GSet starts itself gets none
+    let incoming: Vec<String> = if Runner::of(&g.info) == Runner::Command {
+        vec!["%command%".to_string()]
+    } else {
+        Vec::new()
+    };
     let mut views = BTreeMap::new();
     let ids = std::iter::once(None).chain(c.app.presets.iter().map(|p| Some(p.id.as_str())));
     for id in ids {
@@ -437,6 +479,9 @@ pub fn game_view(c: &Ctx, g: &GameConfig, state: &SteamState, screens: &[Screen]
             mouse_section: g.info.mouse_section.clone(),
             script: g.info.script.clone(),
             runner: runner(state, g),
+            starts_with: Some(Runner::of(&g.info))
+                .filter(|r| *r != Runner::Command)
+                .map(Runner::title),
         },
         art: art_for(&c.steam_root, g.info.steam),
         profile: p.map(|p| ProfileView {
